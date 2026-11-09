@@ -4,37 +4,37 @@ import { Appearance, StyleSheet, useColorScheme } from "react-native";
 export type ColorScheme = "light" | "dark";
 
 const light = {
-  surface: "#F9F6F0",
-  onSurface: "#1A2130",
-  surfaceSecondary: "#FFFFFF",
-  onSurfaceSecondary: "#1A2130",
-  surfaceTertiary: "#EFE9DF",
-  onSurfaceTertiary: "#1A2130",
-  surfaceInverse: "#1A2130",
-  onSurfaceInverse: "#F9F6F0",
-  muted: "#5C667A",
+  surface: "#FDFBF7",
+  onSurface: "#2A241F",
+  surfaceSecondary: "#F2EAE0",
+  onSurfaceSecondary: "#2A241F",
+  surfaceTertiary: "#E6DACB",
+  onSurfaceTertiary: "#2A241F",
+  surfaceInverse: "#2A241F",
+  onSurfaceInverse: "#FDFBF7",
+  muted: "#8C8177",
 
-  brand: "#C85A32",
-  onBrand: "#FFFFFF",
-  brandPrimary: "#C85A32",
-  onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#E37B40",
-  onBrandSecondary: "#FFFFFF",
-  brandTertiary: "#D4AF37",
-  onBrandTertiary: "#1A2130",
+  brand: "#8E735B",
+  onBrand: "#FDFBF7",
+  brandPrimary: "#5A4634",
+  onBrandPrimary: "#FDFBF7",
+  brandSecondary: "#B49A82",
+  onBrandSecondary: "#2A241F",
+  brandTertiary: "#DCD0C3",
+  onBrandTertiary: "#2A241F",
 
-  success: "#4F7942",
-  onSuccess: "#FFFFFF",
-  warning: "#E37B40",
-  onWarning: "#FFFFFF",
-  error: "#9E3B33",
-  onError: "#FFFFFF",
-  info: "#2C3E50",
-  onInfo: "#FFFFFF",
+  success: "#4A6D52",
+  onSuccess: "#FDFBF7",
+  warning: "#9B7235",
+  onWarning: "#FDFBF7",
+  error: "#8B4545",
+  onError: "#FDFBF7",
+  info: "#5A6B7C",
+  onInfo: "#FDFBF7",
 
-  border: "#E5DED5",
-  borderStrong: "#D1C7B9",
-  divider: "#E5DED5",
+  border: "#DCD0C3",
+  borderStrong: "#A89B8F",
+  divider: "#E6DACB",
 };
 
 export type ThemeColors = typeof light;
@@ -65,11 +65,11 @@ export function makeStyles<T extends StyleSheet.NamedStyles<T> | StyleSheet.Name
 }
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, "2xl": 32, "3xl": 48 } as const;
-export const radius = { sm: 0, md: 4, lg: 8, pill: 999 } as const;
+export const radius = { sm: 6, md: 12, lg: 20, pill: 999 } as const;
 
 export const fonts = {
-  display: "CormorantGaramond_500Medium",
-  displayBold: "CormorantGaramond_700Bold",
+  display: "PlayfairDisplay_500Medium",
+  displayBold: "PlayfairDisplay_700Bold",
   body: "DMSans_400Regular",
   bodyMedium: "DMSans_500Medium",
   bodyBold: "DMSans_700Bold",

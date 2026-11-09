@@ -1,0 +1,46 @@
+{
+  "summary": "NVM full rebuild tested end-to-end (backend pytest 19 tests + Playwright 390x844 on web preview). All backend APIs pass: look (with/without heading, 35m offset verified), history build (fresh rural build 13.8s, cached <3s, 404 unknown), cited-source validation on all 7 cached histories (no uncited era text, no unknown source ids, no 'the sources do not' leaks), search (India-only, 422 short q), places, traditions (404/422 validation, no voters/voter_ips/location leakage), devices+upvote (401 bad token, 409 duplicate, community-verified at 5 via simulated distinct IPs, XFF spoofing correctly ignored), 150m radius filter, admin login/queue/moderate/delete-history auth, narration (audio/mpeg) and 404s. Frontend: camera home (facing-pill title, Unearthing status, era chips, era-empty, drag-hint, drag changes heading and fires /look ~1.18s after release, camera-permission prompt, dyk-toast within 150m, tap-to-close, full history nav), location-denied screen + search-instead, search (empty/no-results/result -> place), place screen (summary, then-now, timeline with scope tags and [n] refs, record facts, sources, narrate Preparing->Playing, dyk + community cards with 0/5 upvote), story form submit -> story-submitted, stories upvote 0/5->1/5 (2nd tap no double count), admin wrong-password error, login, verify -> dyk on place and dyk-toast on home. One real UI bug: Did-you-know cards on the place screen have dark text on dark background (unreadable). No deprecated Expo packages (expo-audio, expo-camera, expo-location used).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/history/{key} (content quality)", "issue": "City/region-level source is stretched across several eras with repetitive or inaccurate filler. e.g. nai-sarak 1600s: 'Delhi was the capital of the Mughal Empire during the long period from the early 13th century to the mid-19th century' (conflates Sultanate+Mughal); lajpat 1500s 'Delhi was the capital of the Mughal Empire' (Agra was the main 16th c. capital). pre1500..1700s for Delhi spots are near-identical sentences from the one Delhi article."},
+      {"endpoint": "GET /api/history/{key} (scope)", "issue": "Large-area Wikipedia articles found by geosearch get scope 'spot' (e.g. 'Chandni Chowk' and 'Gali Paranthe Wali' as spot for Katara Nawab; 'Palika Bazaar' spot for Outer Circle). Katara Nawab's summary/street-scope eras describe Paranthewali Gali as if it were this lane -> over-claims what the user is looking at. Nai Sarak article labelled 'spot' rather than 'street'."},
+      {"endpoint": "GET /api/history/{key} (summary/then_now)", "issue": "summary and then_now are not cited and not validated (only eras/did_you_know are filtered by source ids); also no server-side meta-phrase filter. Phulera summary leaks meta wording: 'The documented regional history records the name Rajasthan in print in 1829...'."},
+      {"endpoint": "GET /api/history/{key} (rate limit)", "issue": "build_log entry is inserted before the build, so failed builds (502) still count against the 40/h/IP quota. Every settled drag/heading change on the camera triggers a new build for a neighbouring place (LLM credit + quota burn)."},
+      {"endpoint": "backend dev server", "issue": "uvicorn --reload watches /app/backend/tests, so writing a test file reloads the server and kills in-flight history builds (dev-only)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DykCard (src/components/tradition-cards.tsx:16-17, styles line 73-74)", "issue": "dyk card uses backgroundColor surfaceInverse (#2A241F) but title/body use colors.onSurface (#2A241F) -> title and body are invisible on the place screen. Use onSurfaceInverse for dyk title/body (author muted is also low contrast).", "testID": "dyk-<id>", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Camera home", "issues": ["Era chips are 36px tall (<44 touch target) (index.tsx:385)", "facing-pill renders as cool grey on web (blur fallback), not warm white; 'FACING · N 0°' and subtitle in muted #8C8177 have low contrast (~3.7:1) at 10-12px", "Era card text is truncated with ellipsis; fine since Full history exists"]},
+      {"screen": "Search", "issues": ["Web focus outline draws a dark rectangle inside the rounded search pill (search-input)"]},
+      {"screen": "Admin", "issues": ["'Sign out' renders in a fallback serif font, inconsistent with the rest; Verify button green is off the brown palette (minor)"]},
+      {"screen": "Location permission", "issues": ["On web after denial, allow-location-btn stays and does nothing visible; open-settings-location-btn never shows on web (expected native-only)"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_nvm_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "HIGH: Fix DykCard text colours in src/components/tradition-cards.tsx (title/body -> colors.onSurfaceInverse, author -> brandSecondary or similar).",
+    "Tighten the history prompt/validation: don't repeat one city sentence across 4-5 eras; forbid merging facts across eras (Sultanate vs Mughal); require summary/then_now to be grounded/cited, add a server-side meta-phrase filter.",
+    "Assign scope by article type/extent, not only geosearch distance (area articles like Chandni Chowk should be neighbourhood, not spot); avoid narrating another street's article as 'this street'.",
+    "Consider only counting successful builds in build_log and debouncing builds on heading changes (e.g. build only when the user stays on a place or opens it).",
+    "Raise era chip height to 44 and improve muted-text contrast in the facing pill."
+  ],
+  "critical_code_review_comments": [
+    "compose_history: valid_ids includes the OpenStreetMap source even though it's not sent to the LLM; an era citing only the OSM id would pass validation.",
+    "summary/then_now bypass the citation filter (history_engine.py:317-319).",
+    "client_ip with TRUSTED_PROXY_HOPS=2 correctly ignores spoofed X-Forwarded-For via ingress (verified)."
+  ],
+  "updated_files": ["/app/backend/tests/test_nvm_api.py (new)"],
+  "success_rate": {"backend": "100% (19/19; narrate initially failed only due to xdist ordering, test fixed)", "frontend": "95% (all flows work; dyk card text unreadable)"},
+  "seed_data_creation": "Created 3 TEST_ traditions (deleted by id afterwards) and new cached histories via normal use: feroze-gandhi-road, katara-nawab, outer-circle, kashmiri-market, nai-sarak, phulera-tehsil (kept, per instructions). Cleaned device_issues (14) and build_log (9) entries from the test window; the build_log cleanup window may have included ~3 counter rows from E1's runs just before testing (rate-limit counters only).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && export $(grep EXPO_PUBLIC_BACKEND_URL /app/frontend/.env) && python -m pytest tests/test_nvm_api.py (pytest.ini uses xdist; use -n 0 -s to see printed history content). The 5-upvote test uses localhost:8001 with spoofed X-Forwarded-For to simulate distinct IPs (VOTES_PER_IP_PER_TRADITION=3). Frontend: use page.context.grant_permissions(['geolocation']) + set_geolocation; drag on camera area changes heading. Real camera/compass untested (device only).",
+  "rca_of_issue": "DykCard unreadable: styles.title/body are shared with the light community card and use colors.onSurface, which equals surfaceInverse used as the dyk background."
+}

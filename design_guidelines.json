@@ -1,39 +1,39 @@
 {
-  "app_name": "Yatra",
+  "app_name": "NVM",
   "personality": "3 Editorial Mobile LIGHT",
-  "personality_one_liner": "An elegant, magazine-like journey through India's rich heritage, blending immersive exploration with respectful, storytelling-led design.",
+  "personality_one_liner": "An elegant, content-led historical lens blending scholarly trustworthiness with a tactile, warm parchment feel.",
   "color": {
-    "surface": "#F9F6F0",
-    "onSurface": "#1A2130",
-    "surfaceSecondary": "#FFFFFF",
-    "onSurfaceSecondary": "#1A2130",
-    "surfaceTertiary": "#EFE9DF",
-    "onSurfaceTertiary": "#1A2130",
-    "surfaceInverse": "#1A2130",
-    "onSurfaceInverse": "#F9F6F0",
-    "brand": "#C85A32",
-    "brandPrimary": "#C85A32",
-    "onBrandPrimary": "#FFFFFF",
-    "brandSecondary": "#E37B40",
-    "onBrandSecondary": "#FFFFFF",
-    "brandTertiary": "#D4AF37",
-    "onBrandTertiary": "#1A2130",
-    "success": "#4F7942",
-    "onSuccess": "#FFFFFF",
-    "warning": "#E37B40",
-    "onWarning": "#FFFFFF",
-    "error": "#9E3B33",
-    "onError": "#FFFFFF",
-    "info": "#2C3E50",
-    "onInfo": "#FFFFFF",
-    "border": "#E5DED5",
-    "borderStrong": "#D1C7B9",
-    "divider": "#E5DED5",
-    "muted": "#5C667A",
-    "onBrand": "#FFFFFF"
+    "surface": "#FDFBF7",
+    "onSurface": "#2A241F",
+    "surfaceSecondary": "#F2EAE0",
+    "onSurfaceSecondary": "#2A241F",
+    "surfaceTertiary": "#E6DACB",
+    "onSurfaceTertiary": "#2A241F",
+    "surfaceInverse": "#2A241F",
+    "onSurfaceInverse": "#FDFBF7",
+    "brand": "#8E735B",
+    "onBrand": "#FDFBF7",
+    "brandPrimary": "#5A4634",
+    "onBrandPrimary": "#FDFBF7",
+    "brandSecondary": "#B49A82",
+    "onBrandSecondary": "#2A241F",
+    "brandTertiary": "#DCD0C3",
+    "onBrandTertiary": "#2A241F",
+    "success": "#4A6D52",
+    "onSuccess": "#FDFBF7",
+    "warning": "#9B7235",
+    "onWarning": "#FDFBF7",
+    "error": "#8B4545",
+    "onError": "#FDFBF7",
+    "info": "#5A6B7C",
+    "onInfo": "#FDFBF7",
+    "border": "#DCD0C3",
+    "borderStrong": "#A89B8F",
+    "divider": "#E6DACB",
+    "muted": "#8C8177"
   },
   "typography": {
-    "displayFontFamily": "Cormorant Garamond",
+    "displayFontFamily": "Playfair Display",
     "textFontFamily": "DM Sans",
     "scale": {
       "sm": 12,
@@ -44,7 +44,7 @@
     }
   },
   "spacing": {
-    "rule": "Magazine-like spacing rhythms with generous vertical breathing room. Let typography, whitespace, content, and imagery carry the personality. No dense card-heavy layouts.",
+    "rule": "Generous magazine-like vertical rhythms. Keep padding comfortable, allowing text and history to breathe.",
     "xs": 4,
     "sm": 8,
     "md": 12,
@@ -54,147 +54,127 @@
     "3xl": 48
   },
   "radius_tokens": {
-    "sm": 0,
-    "md": 4,
-    "lg": 8,
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
     "pill": 999
   },
   "shadow_tier": 0,
-  "navigation": "bottom_tabs",
+  "navigation": "stack_only",
   "icon_set": "Feather",
   "glassmorphism": {
-    "enabled": false,
-    "do's": [],
+    "enabled": "true",
+    "do's": [
+      "Use heavy glassmorphism for floating UI elements over the live camera (location pill, era scrubber, bottom peek card).",
+      "Use gradient scrims over historical background images to guarantee text readability.",
+      "Apply subtle blur behind the floating 'Did You Know' toast."
+    ],
     "dont's": [
-      "No glassmorphism. Editorial personality relies on solid surfaces, fine borders, and generous whitespace instead of digital blur."
+      "Avoid glassmorphism on text-heavy article screens (Full History).",
+      "Do not blur standard form fields or the timeline background."
     ]
   },
   "platform_libraries": {
     "glass": {
-      "ios": "none",
-      "android": "none",
-      "low_end_android_fallback": "none"
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
     },
     "image": "expo-image",
-    "blur": "none",
+    "blur": "expo-blur",
     "bottom_sheet": "@gorhom/bottom-sheet",
     "animation": "react-native-reanimated",
     "gesture": "react-native-gesture-handler"
   },
   "screens": [
     {
-      "name": "Home/Discover",
-      "purpose": "Discover nearby heritage sites and curated Indian destinations.",
+      "name": "Camera Home",
+      "purpose": "A live AR viewport anchoring the user to their present location while allowing time travel via the UI.",
       "states": {
-        "loading": "Skeleton images with subtle pulse, text lines as grey blocks.",
-        "empty": "Illustration of a map/compass with text 'No nearby sites found. Try searching.'",
-        "error": "Text 'Unable to load destinations' with a Retry button."
+        "loading": "A full-screen surface with an elegant spinner and text 'Unearthing the history of this spot...'",
+        "empty": "N/A - Camera feed is always present once loaded.",
+        "error": "Full-screen surface Inverse with an error message and a retry button."
       },
-      "layout": "Header with 'Yatra' in large display serif. Top section: 'Nearby' with a horizontal scroll of full-bleed image cards. Below: 'Curated Destinations' using a vertical list of edge-to-edge images or large editorial cards with thin borders, titles inside the image (with gradient scrim) or elegantly below. Images must have gradient scrims if text is overlaid."
+      "layout": "Camera view flex: 1. Top safe area: A floating glass pill 'Facing: Street Name'. Bottom area: An era scrubber (segmented control) floating above a bottom card. The bottom card (glass or solid surface) shows the historical snippet for the selected era, a scope tag ('This street'), and source count. Floating Action Buttons (FABs) for 'Search' and 'Add Story' placed appropriately above the card. 'Did You Know?' toast appears dynamically as an overlay when nearby."
     },
     {
-      "name": "Place Detail",
-      "purpose": "Deep dive into the history of a specific site.",
+      "name": "Full History",
+      "purpose": "A rich, editorial deep-dive into the timeline of the location.",
       "states": {
-        "loading": "Centered spinner over a faded image placeholder.",
-        "empty": "Not applicable (data-driven).",
-        "error": "Toast or inline text 'Failed to load details'."
+        "loading": "Skeleton of the timeline.",
+        "empty": "Illustration of old parchment with 'No recorded history for this exact spot. Be the first to add an oral tradition!'",
+        "error": "Readable error message with a 'Retry' button."
       },
-      "layout": "Cinematic hero image with gradient-to-dark scrim. Title in Cormorant Garamond overlaid at the bottom of the hero. Below image: A vertical timeline using a clean line and dots for dates (1600s, 1700s). Distinct sections for '360° Panorama View', 'AR Camera', and 'Did you know?' trivia card. A sticky mini audio player at the bottom for narration."
-    },
-    {
-      "name": "360° Viewer",
-      "purpose": "Immersive panoramic viewer.",
-      "states": {
-        "loading": "Spinner centered on a dark screen.",
-        "empty": "N/A",
-        "error": "Error message with 'Go Back' button."
-      },
-      "layout": "Full-screen image with an interactive overlay. Floating action buttons or info hotspots anchored on the image. Solid surface secondary back button at the top safe area."
-    },
-    {
-      "name": "AR Camera View",
-      "purpose": "Camera view with historical fact overlays.",
-      "states": {
-        "loading": "Camera permission prompt or initializing spinner.",
-        "empty": "N/A",
-        "error": "Camera access denied message."
-      },
-      "layout": "Full-screen camera view (mocked via a clean background image). Floating solid cards (surfaceSecondary with border) anchored to screen points showing historical facts. Segmented control or a prominent 'Exit AR' button at the bottom."
-    },
-    {
-      "name": "Add Contribution",
-      "purpose": "Form to add a 'Did you know?' local tradition/trivia.",
-      "states": {
-        "loading": "Spinner overlay on submit.",
-        "empty": "N/A",
-        "error": "Inline validation errors."
-      },
-      "layout": "Editorial form. Large serif title 'Share a Tradition'. Clean text inputs with border only on bottom or simple surfaceTertiary blocks. Image upload placeholder. Submit button sticky at bottom inside KeyboardAvoidingView."
+      "layout": "Rendered as a full-screen sheet or pushed screen. Hero image at the top with a gradient scrim and the street name in Playfair Display. Below: A vertical timeline (nodes connecting eras). Includes a 'Then vs Now' image comparison section. Bottom section: List of sources, a 'Play Narration' FAB, and community 'Did You Know' cards. A clear 'Add a story' CTA at the very bottom."
     },
     {
       "name": "Search",
-      "purpose": "Search heritage sites by name/city/state.",
+      "purpose": "Find specific streets or localities manually.",
       "states": {
-        "loading": "Spinner below search bar.",
-        "empty": "Message 'No sites match your search.'",
-        "error": "Search failed message."
+        "loading": "Spinner in the search results area.",
+        "empty": "Illustration with 'Search any street in India'.",
+        "error": "Error message with 'Retry'."
       },
-      "layout": "Clean search bar at top safe area. Recent searches or popular tags below as simple text list. List view of search results."
+      "layout": "Large search input at the top. Below: a list of recent searches or suggested historical spots with small location icons. Clean, text-focused list."
     },
     {
-      "name": "Profile/My Journey",
-      "purpose": "Track visited places and saved spots.",
+      "name": "Oral Traditions (Add & Review)",
+      "purpose": "Community contribution layer for local stories.",
       "states": {
-        "loading": "Spinner in center.",
-        "empty": "'You haven't visited any sites yet.'",
-        "error": "Failed to load profile."
+        "loading": "Spinner during submission.",
+        "empty": "Illustration of a pen/paper: 'No pending stories here.'",
+        "error": "Error message with 'Retry'."
       },
-      "layout": "Profile header with a vintage compass map background. User stats centered. Tabs for 'Visited' and 'Saved'. Grid or list of beautifully framed photos of visited sites below."
+      "layout": "Tabs for 'Submit' and 'Community Review'. Submit: Clean single-column form (Name, Title, Story multiline input) with a sticky Submit button at the bottom. Review: A list of pending stories as cards with 'Upvote' counts (x/5)."
+    },
+    {
+      "name": "Admin Dashboard",
+      "purpose": "Admin verification of stories.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "Text: 'All caught up! No stories pending review.'",
+        "error": "Error message with 'Retry'."
+      },
+      "layout": "Simple list of pending stories. Each card has the story content and 'Approve' / 'Reject' action buttons."
+    },
+    {
+      "name": "Permissions",
+      "purpose": "Elegant explainer for Camera and Location access.",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Full-screen surface view. Large Playfair Display heading, elegant text explaining the need for permissions to unearth history. Primary CTA to 'Allow Access', secondary to 'Open Settings'."
     }
   ],
   "images": {
-    "taj_mahal": {
-      "url": "https://images.unsplash.com/photo-1587135941948-670b381f08ce?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxUYWolMjBNYWhhbCUyMGdvbGRlbiUyMGhvdXIlMjBpbGx1bWluYXRlZHxlbnwwfHx8fDE3OTQyMTYxNTJ8MA&ixlib=rb-4.1.0&q=85",
-      "alt": "The Taj Mahal in Agra under a warm golden hour sky"
+    "timeline_hero": {
+      "url": "https://images.unsplash.com/photo-1758980857258-e3323148e194?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwxfHxoaXN0b3JpY2FsJTIwc3RyZWV0JTIwb2xkJTIwdG93biUyMGFyY2hpdGVjdHVyZXxlbnwwfHx8fDE3OTQyMjQwNTB8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Cobblestone street under ancient stone archway"
     },
-    "hampi": {
-      "url": "https://images.unsplash.com/photo-1696239109250-a83577abcbeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxIYW1waSUyMHN0b25lJTIwY2hhcmlvdCUyMGhlcml0YWdlfGVufDB8fHx8MTc5NDIxNjE1Mnww&ixlib=rb-4.1.0&q=85",
-      "alt": "a large stone structure with steps leading up to it"
-    },
-    "mysore_palace": {
-      "url": "https://images.unsplash.com/photo-1764858147489-47a546c6e8ca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxNeXNvcmUlMjBwYWxhY2UlMjBpbGx1bWluYXRlZCUyMG5pZ2h0fGVufDB8fHx8MTc5NDIxNjE1Mnww&ixlib=rb-4.1.0&q=85",
-      "alt": "Illuminated palace complex at night with city lights"
-    },
-    "konark": {
-      "url": "https://images.unsplash.com/photo-1639980290886-6bdd61c7582b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxLb25hcmslMjBzdW4lMjB0ZW1wbGUlMjB3aGVlbHxlbnwwfHx8fDE3OTQyMTYxNTh8MA&ixlib=rb-4.1.0&q=85",
-      "alt": "a large wheel on the side of a building"
-    },
-    "khajuraho": {
-      "url": "https://images.unsplash.com/photo-1672215055915-e6143dc70e6a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxLaGFqdXJhaG8lMjB0ZW1wbGUlMjBkZXRhaWxzfGVufDB8fHx8MTc5NDIxNjE1OHww&ixlib=rb-4.1.0&q=85",
-      "alt": "a very tall building with statues on it's sides"
-    },
-    "red_fort": {
-      "url": "https://images.unsplash.com/photo-1713729991304-d0b6c328560e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxSZWQlMjBGb3J0JTIwRGVsaGklMjBoZXJpdGFnZSUyMGFyY2hpdGVjdHVyZXxlbnwwfHx8fDE3OTQyMTYxNjV8MA&ixlib=rb-4.1.0&q=85",
-      "alt": "a large building with two towers on top of it"
-    },
-    "360_bg": {
-      "url": "https://images.unsplash.com/photo-1561042771-abb14f50b8f4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwxfHxJbmRpYW4lMjBoZXJpdGFnZSUyMGFyY2hpdGVjdHVyZSUyMHBhdHRlcm4lMjBpbnRlcmlvciUyMHdpZGV8ZW58MHx8fHwxNzk0MjE2MTU5fDA&ixlib=rb-4.1.0&q=85",
-      "alt": "blue and brown building interior"
-    },
-    "profile_bg": {
-      "url": "https://images.unsplash.com/photo-1570137493662-409569bb1c01?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHx2aW50YWdlJTIwY29tcGFzcyUyMGhlcml0YWdlJTIwbWFwfGVufDB8fHx8MTc5NDIxNjE2NXww&ixlib=rb-4.1.0&q=85",
-      "alt": "round black compass"
+    "empty_parchment": {
+      "url": "https://images.unsplash.com/photo-1705837863332-7162639852d8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxvbGQlMjBwYXJjaG1lbnQlMjBwYXBlciUyMHRleHR1cmV8ZW58MHx8fHwxNzk0MjI0MDUwfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "old creased blank paper texture"
     }
   },
+  "haptics": {
+    "era_scrub": "light",
+    "card_swipe": "medium",
+    "button_press": "light",
+    "timeline_node_tap": "light",
+    "upvote_story": "success",
+    "did_you_know_toast_appear": "medium"
+  },
   "instructions_to_main_agent": [
-    "Strictly follow the Editorial Mobile LIGHT personality. Use Cormorant Garamond for headers and DM Sans for body text.",
-    "Do NOT use glassmorphism. Rely on solid surfaceSecondary and thin borders (#E5DED5) to create elevation and structure.",
-    "Use generous whitespace. Avoid cramped, card-heavy layouts. Let the beautiful imagery and elegant typography breathe.",
-    "For images with overlaid text (e.g., Place Detail hero, Home cards), you MUST use a vertical gradient scrim (transparent to surfaceInverse) to ensure readable text.",
-    "The audio player should be a sticky bottom element (solid background, top border) on the Place Detail screen, not a glass pane.",
-    "AR Camera View can be mocked with an immersive image background and floating informational UI cards.",
-    "Ensure all primary CTAs are sticky at the bottom with proper safe-area padding.",
-    "Deep Indigo is used for text to provide high contrast without defaulting to pure black, maintaining the heritage warmth."
+    "Strictly adhere to the 'Editorial Mobile LIGHT' personality. The app should feel like a warm, tactile, high-end magazine or a piece of old parchment.",
+    "Do NOT use pure black or stark white. Rely entirely on the provided whitish-brown/cream palette (e.g., surface: #FDFBF7, onSurface: #2A241F, brandPrimary: #5A4634).",
+    "For the 'Camera Home' screen, the underlying layer is the live camera. Ensure all overlays (location pill, era scrubber, bottom card) utilize heavy glassmorphism with proper readability layers.",
+    "Implement the 'Full History' timeline screen with a clear vertical spine, utilizing Playfair Display for era headings to give an authoritative historical feel.",
+    "When displaying text over any background image (e.g., the Full History hero image), MANDATORILY apply a vertical linear gradient scrim (transparent to dark) and render text using 'onSurfaceInverse'.",
+    "Ensure touch targets for the era scrubber and timeline nodes are at least 44x44pt.",
+    "For 'Did You Know' popups, use a floating toast notification overlaid on the camera, appearing seamlessly with a haptic bump.",
+    "Never use indigo, blue, or purple. Stick faithfully to the warm earth tones provided.",
+    "Ensure the loading screen uses an elegant spinner with the specific text 'Unearthing the history of this spot...' taking up the full screen to set the mood during initial 5-20s load times."
   ]
 }

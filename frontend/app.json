@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Yatra",
+    "name": "NVM",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -11,15 +11,14 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.pastscape.ydt2z5",
       "infoPlist": {
-        "NSCameraUsageDescription": "See heritage facts overlaid on your view",
-        "NSLocationWhenInUseUsageDescription": "Discover heritage sites around you",
-        "NSMicrophoneUsageDescription": "Record audio with your contributions"
+        "NSCameraUsageDescription": "Point at a street to see its history",
+        "NSLocationWhenInUseUsageDescription": "Know which street you are looking at"
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#1A2130"
+        "backgroundColor": "#FDFBF7"
       },
       "package": "com.emergent.pastscape.ydt2z5",
       "permissions": [
@@ -41,7 +40,7 @@
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#1A2130"
+          "backgroundColor": "#FDFBF7"
         }
       ],
       "expo-font",
@@ -53,13 +52,13 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "See heritage facts overlaid on your view"
+          "cameraPermission": "Point at a street to see its history"
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Discover heritage sites around you"
+          "locationAlwaysAndWhenInUsePermission": "Know which street you are looking at"
         }
       ],
       "@react-native-vector-icons/feather"

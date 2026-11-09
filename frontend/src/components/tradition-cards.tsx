@@ -11,16 +11,16 @@ export function DidYouKnowCard({ t }: { t: Tradition }) {
   return (
     <View style={styles.dyk} testID={`dyk-${t.id}`}>
       <Text style={styles.dykTag}>
-        DID YOU KNOW? · {t.verified_by === "admin" ? "VERIFIED BY YATRA" : "VERIFIED BY COMMUNITY"}
+        DID YOU KNOW? · {t.verified_by === "admin" ? "VERIFIED BY NVM" : "VERIFIED BY COMMUNITY"}
       </Text>
-      <Text style={styles.dykTitle}>{t.title}</Text>
-      <Text style={styles.dykBody}>{t.body}</Text>
-      <Text style={styles.author}>Shared by {t.author}</Text>
+      <Text style={[styles.title, styles.dykText]}>{t.title}</Text>
+      <Text style={[styles.body, styles.dykText]}>{t.body}</Text>
+      <Text style={[styles.author, styles.dykAuthor]}>Shared by {t.author}</Text>
     </View>
   );
 }
 
-export function CommunityCard({ t, threshold, place }: { t: Tradition; threshold: number; place?: string }) {
+export function CommunityCard({ t, threshold, showPlace }: { t: Tradition; threshold: number; showPlace?: boolean }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const qc = useQueryClient();
@@ -29,7 +29,7 @@ export function CommunityCard({ t, threshold, place }: { t: Tradition; threshold
     mutationFn: () => api.upvote(t.id),
     onSuccess: () => {
       setError(null);
-      qc.invalidateQueries();
+      qc.invalidateQueries({ queryKey: ["stories"] });
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -38,7 +38,7 @@ export function CommunityCard({ t, threshold, place }: { t: Tradition; threshold
 
   return (
     <View style={styles.card} testID={`community-${t.id}`}>
-      {place ? <Text style={styles.place}>{place}</Text> : null}
+      {showPlace ? <Text style={styles.place}>{t.place_title.toUpperCase()}</Text> : null}
       <Text style={styles.title}>{t.title}</Text>
       <Text style={styles.body}>{t.body}</Text>
       <View style={styles.footer}>
@@ -48,6 +48,7 @@ export function CommunityCard({ t, threshold, place }: { t: Tradition; threshold
           disabled={voted || vote.isPending}
           style={[styles.vote, voted && styles.voteDone]}
           testID={`upvote-${t.id}`}
+          accessibilityLabel={voted ? "Upvoted" : "Upvote this story"}
         >
           {vote.isPending ? (
             <ActivityIndicator size="small" color={colors.brandPrimary} />
@@ -65,39 +66,26 @@ export function CommunityCard({ t, threshold, place }: { t: Tradition; threshold
 }
 
 const useStyles = makeStyles((colors) => ({
-  dyk: {
-    padding: spacing.lg,
-    backgroundColor: colors.surfaceTertiary,
-    borderRadius: radius.lg,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.brandTertiary,
-    marginBottom: spacing.md,
-  },
-  dykTag: { fontFamily: fonts.bodyBold, fontSize: 10, color: colors.brandPrimary, letterSpacing: 1.2 },
-  dykTitle: { fontFamily: fonts.displayBold, fontSize: 19, color: colors.onSurface, marginTop: spacing.sm },
-  dykBody: { fontFamily: fonts.body, fontSize: 14, lineHeight: 22, color: colors.onSurface, marginTop: spacing.xs },
-  card: {
-    padding: spacing.lg,
-    backgroundColor: colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    marginBottom: spacing.md,
-  },
-  place: { fontFamily: fonts.bodyBold, fontSize: 10, color: colors.muted, letterSpacing: 1.2, marginBottom: spacing.xs },
+  dyk: { padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceInverse, marginBottom: spacing.md },
+  dykTag: { fontFamily: fonts.bodyBold, fontSize: 10, letterSpacing: 1.4, color: colors.brandSecondary, marginBottom: spacing.xs },
+  dykText: { color: colors.onSurfaceInverse },
+  dykAuthor: { color: colors.brandTertiary },
+  card: { padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, marginBottom: spacing.md },
+  place: { fontFamily: fonts.bodyBold, fontSize: 10, letterSpacing: 1.2, color: colors.muted, marginBottom: spacing.xs },
   title: { fontFamily: fonts.displayBold, fontSize: 18, color: colors.onSurface },
   body: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.onSurface, marginTop: spacing.xs },
-  footer: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.md },
-  author: { fontFamily: fonts.body, fontSize: 12, color: colors.muted, marginTop: spacing.sm },
+  author: { fontFamily: fonts.body, fontSize: 12, color: colors.muted, marginTop: spacing.sm, flexShrink: 1 },
+  footer: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   vote: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: spacing.xs,
     minHeight: 44,
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: colors.brandPrimary,
+    marginTop: spacing.sm,
   },
   voteDone: { backgroundColor: colors.brandPrimary },
   voteText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.brandPrimary },

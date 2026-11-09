@@ -1,33 +1,25 @@
-# Yatra: India's history through your camera
+# NVM (Nevermind): point your camera at any street, see what was there
 
-## Original problem statement
-"I want to create an app that could tell the history of each place. Wherever I travel, I open my phone, see a VR/AR view of the place I'm around, and it tells the history: exact dates, what happened in the 1700s, 1800s. Make it global later, India first. Keep an add-history section where people can add local traditions, like a sudden 'Did you know?' when you get to that place."
-
-Second brief (v2): "It's very basic. I want it to work like Wikipedia + maps through the camera. Point the camera at a place (not just monuments, normal places and states too) and see what was there in the 1700s, 1800s, 1970s and what's there now. Start with Chandni Chowk. Content can be added later, but code it properly. Add oral traditions that people can submit. Verified ones become 'Did you know?' facts."
+## Problem statement (latest, v3)
+"Everything has to be when you are in front of that place. Not just monuments — streets are the main thing. Any street I go to, I put my camera on and it tells me its history: 1500s, 1600s, 1700s… everywhere in the world, starting with India. One camera that shows a place and tells me its detail — Chandni Chowk, something inside it, a random street near it, or any street in India. If I search a street, I know what was there before (maybe just barren land). Build the base right; content can grow. App name NVM (Nevermind). Simple design: white + brown." Earlier asks kept: oral traditions people can add. Verified ones become "Did you know?" at that spot.
 
 ## User choices
-- Verification: BOTH community upvotes (5) AND admin approval
-- Places with no hand-written content: show NOTHING (no AI-written history)
-- Camera view: ONLY on location (no remote/virtual tour)
-- Narration: OpenAI TTS (tts-1, voice "fable") via the Emergent key
-- Style: warm heritage palette (Cormorant Garamond + DM Sans)
+- Story verification: BOTH 5 community upvotes AND admin approval
+- Camera works on location (search lets you read any street remotely)
+- Narration: OpenAI TTS (tts-1, "fable") via the Emergent key
+- Design: simple, warm white/brown (Playfair Display + DM Sans)
+- History text: AI (GPT-5.6-terra) may ONLY arrange fetched open-data sources. Every era is cited and scope-labelled, and empty eras stay empty. (This replaces the v2 choice of "nothing without hand-written content", because v3 needs coverage of any street.)
 
 ## Architecture
-- Backend: FastAPI + MongoDB (`server.py`, starter content in `seed_content.py` with SEED_VERSION)
-  - Content model: regions (states) → areas (e.g. Chandni Chowk, with a GPS radius) → POIs (lat/lng + era entries keyed by era: 1650s, 1700s, 1857, 1900s, 1947, 1970s, today)
-  - Traditions: pending → verified (5 upvotes from server-signed device tokens, max 3 votes per network, or admin) / rejected
-  - Admin: JWT login (argon2 hash, account seeded from env), moderation queue, content upsert APIs (PUT /api/admin/regions|areas|pois/{slug})
-  - Narration: TTS mp3 cached on disk and served with FileResponse
-- Frontend: Expo Router. Tabs: Explore, Camera, Traditions, Journey. Stack: region, area, poi, tradition/new, admin
-  - Camera: live GPS + compass heading projects nearby POIs (600 m range, 55° FOV) onto the camera feed. An era picker changes every label. A "Did you know?" pops up within 80 m of a POI with verified traditions. On web you drag to rotate (there's no compass)
+- backend/history_engine.py: OSM Nominatim reverse/search (1 req/s throttle) → Wikipedia geosearch + level articles (street, neighbourhood, city, district, state) + Wikidata items within 400 m → GPT-5.6-terra makes JSON for 8 eras (pre1500, 1500s, 1600s, 1700s, 1800s, 1900_1947, 1947_2000, today), each with scope + source ids. Uncited text is dropped, and OSM is never a history citation.
+- backend/server.py: /api/look (35 m ahead along the compass heading, 11 m geocode cache cell), /api/history/{key} (cached per place, in-flight dedupe, 40 builds/IP/hour, failures uncounted), /api/search, stories (geo 2dsphere, 150 m radius), device tokens + per-network vote cap, admin JWT (argon2), DELETE /api/admin/history/{key} to rebuild, TTS narration
+- frontend: stack only. index (camera home: live camera, facing pill, era chips, era card, "Did you know?" toast), place/[key] (full timeline, then-now, facts, sources, narration, stories), search, story/new, stories (community votes), admin
 
-## Implemented
-- 2026-11-09 v1: basic places, AI timeline, 360 photo, AR overlay, trivia (replaced)
-- 2026-11-09 v2: full rebuild into location-based camera + era time-travel; Chandni Chowk with 12 hand-written POIs; Delhi state timeline; 5 other states as "coming soon"; oral traditions with upvotes + admin moderation; admin content APIs; bundled fonts; real Wikimedia photos; anti-spoof IP handling (TRUSTED_PROXY_HOPS)
+## Done
+- 2026-11-09 v1 Yatra (basic places) → v2 (Chandni Chowk hand-written camera labels) → v3 NVM rebuild (any street, open-data engine)
+- v3 testing iteration_4: all flows pass. Fixed the unreadable "Did you know?" card, scope over-claims, repeated filler, uncited summary/then-now, OSM as citation, and failed builds counting against the limit
 
 ## Backlog
-- P0: fact-check the starter content with a historian before launch
-- P1: admin screen for adding/editing places (APIs already exist), photo uploads on traditions, offline cache of an area
-- P1: then/now photo slider (archival images per era)
-- P2: more areas (Hauz Khas, Lodhi Road, Fort Kochi, Old Goa), global expansion, multilingual (Hindi) content + narration
-- Note: TRUSTED_PROXY_HOPS=2 matches the preview proxy chain (Cloudflare + Google LB). Re-check it in production.
+- P0 before launch: replace public Nominatim with a paid geocoder (public usage policy disallows heavy app traffic); re-check TRUSTED_PROXY_HOPS in production
+- P1: Hindi/regional-language Wikipedia sources (much richer for small towns), archival photos per era, offline cache for an area, admin "rebuild/edit history" UI
+- P2: global rollout (engine is already country-agnostic; search is limited to India via countrycodes=in)

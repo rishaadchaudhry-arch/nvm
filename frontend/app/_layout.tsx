@@ -19,8 +19,8 @@ LogBox.ignoreAllLogs(true);
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    CormorantGaramond_500Medium: require("../assets/fonts/CormorantGaramond-Medium.ttf"),
-    CormorantGaramond_700Bold: require("../assets/fonts/CormorantGaramond-Bold.ttf"),
+    PlayfairDisplay_500Medium: require("../assets/fonts/PlayfairDisplay-Medium.ttf"),
+    PlayfairDisplay_700Bold: require("../assets/fonts/PlayfairDisplay-Bold.ttf"),
     DMSans_400Regular: require("../assets/fonts/DMSans-Regular.ttf"),
     DMSans_500Medium: require("../assets/fonts/DMSans-Medium.ttf"),
     DMSans_700Bold: require("../assets/fonts/DMSans-Bold.ttf"),

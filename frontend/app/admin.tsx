@@ -73,8 +73,8 @@ export default function Admin() {
         ) : null}
       </View>
       <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["2xl"] }} bottomOffset={spacing.xl} keyboardShouldPersistTaps="handled">
-        <Text style={styles.tag}>YATRA TEAM</Text>
-        <Text style={styles.title}>Review traditions</Text>
+        <Text style={styles.tag}>NVM TEAM</Text>
+        <Text style={styles.title}>Review stories</Text>
 
         {authed === null ? (
           <ActivityIndicator color={colors.brandPrimary} />
@@ -118,7 +118,7 @@ function ReviewCard({ t }: { t: Tradition }) {
   });
   return (
     <View style={styles.card} testID={`review-${t.id}`}>
-      <Text style={styles.cardPlace}>{(t.poi_slug ?? t.area_slug).replace(/-/g, " ").toUpperCase()} · {t.upvotes} {t.upvotes === 1 ? "UPVOTE" : "UPVOTES"}</Text>
+      <Text style={styles.cardPlace}>{t.place_title.toUpperCase()} · {t.upvotes} {t.upvotes === 1 ? "UPVOTE" : "UPVOTES"}</Text>
       <Text style={styles.cardTitle}>{t.title}</Text>
       <Text style={styles.cardBody}>{t.body}</Text>
       <Text style={styles.cardAuthor}>Shared by {t.author}</Text>

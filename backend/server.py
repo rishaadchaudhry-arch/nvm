@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import logging
-import math
 import os
 import re
 import uuid
@@ -23,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
-from seed_content import AREAS, ERAS, POIS, REGIONS, SEED_VERSION
+import history_engine as he
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -36,8 +35,13 @@ ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 UPVOTE_THRESHOLD = int(os.environ["UPVOTE_THRESHOLD"])
 TRUSTED_PROXY_HOPS = int(os.environ["TRUSTED_PROXY_HOPS"])
+BUILDS_PER_IP_PER_HOUR = int(os.environ["BUILDS_PER_IP_PER_HOUR"])
 JWT_ALG = "HS256"
 TOKEN_MINUTES = 60 * 12
+FACING_DISTANCE_M = 35  # how far ahead of the phone we look when the camera points somewhere
+STORY_RADIUS_M = 150  # a verified story shows as "Did you know?" within this distance
+DEVICES_PER_IP_PER_HOUR = 20
+VOTES_PER_IP_PER_TRADITION = 3
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -51,23 +55,21 @@ DUMMY_HASH = password_hash.hash("dummy-password-to-even-out-timing")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 INDEXES: dict[str, list[IndexModel]] = {
-    "regions": [IndexModel([("slug", ASCENDING)], name="slug", unique=True)],
-    "areas": [
-        IndexModel([("slug", ASCENDING)], name="slug", unique=True),
-        IndexModel([("region_slug", ASCENDING)], name="region_slug"),
-    ],
-    "pois": [
-        IndexModel([("slug", ASCENDING)], name="slug", unique=True),
-        IndexModel([("area_slug", ASCENDING)], name="area_slug"),
-    ],
+    "places": [IndexModel([("key", ASCENDING)], name="key", unique=True)],
+    "histories": [IndexModel([("key", ASCENDING)], name="key", unique=True)],
+    "geocode_cache": [IndexModel([("cell", ASCENDING)], name="cell", unique=True)],
     "traditions": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
-        IndexModel([("area_slug", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="area_status"),
-        IndexModel([("poi_slug", ASCENDING), ("status", ASCENDING)], name="poi_status"),
-        IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="status_created"),
+        IndexModel([("location", "2dsphere")], name="location_2dsphere"),
+        IndexModel([("place_key", ASCENDING), ("status", ASCENDING)], name="place_status"),
+        IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created"),
     ],
     "admins": [IndexModel([("email", ASCENDING)], name="email", unique=True)],
     "device_issues": [
+        IndexModel([("created_at", ASCENDING)], name="ttl", expireAfterSeconds=3600),
+        IndexModel([("ip", ASCENDING)], name="ip"),
+    ],
+    "build_log": [
         IndexModel([("created_at", ASCENDING)], name="ttl", expireAfterSeconds=3600),
         IndexModel([("ip", ASCENDING)], name="ip"),
     ],
@@ -86,49 +88,58 @@ async def ensure_indexes() -> None:
 # ------------------------------- MODELS -------------------------------------
 
 
-class Era(BaseModel):
+class Place(BaseModel):
     key: str
     title: str
-    description: str
-
-
-class Region(BaseModel):
-    slug: str
-    name: str
-    kind: str = "state"
-    cover_image: str
-    summary: str = ""
-    eras: List[Era] = []
-
-
-class Area(BaseModel):
-    slug: str
-    region_slug: str
-    name: str
+    subtitle: str = ""
     lat: float
     lng: float
-    radius_m: int
-    cover_image: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    display_name: str = ""
+    osm_url: Optional[str] = None
+
+
+class EraEntry(BaseModel):
+    key: str
+    label: str
+    heading: str = ""
+    text: str = ""
+    scope: str = "none"
+    sources: List[int] = []
+
+
+class Source(BaseModel):
+    id: int
+    type: str
+    title: str
+    url: str
+    scope: str
+
+
+class FactOut(BaseModel):
+    text: str
+    sources: List[int] = []
+
+
+class History(BaseModel):
+    key: str
     summary: str = ""
-    era_keys: List[str] = []
-    eras: List[Era] = []
-
-
-class Poi(BaseModel):
-    slug: str
-    area_slug: str
-    name: str
-    category: str
-    lat: float
-    lng: float
-    image: str
-    eras: List[Era] = []
+    eras: List[EraEntry]
+    then_now: str = ""
+    did_you_know: List[FactOut] = []
+    sources: List[Source] = []
+    has_records: bool
+    built_at: datetime
 
 
 class Tradition(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    area_slug: str
-    poi_slug: Optional[str] = None
+    place_key: str
+    place_title: str
+    lat: float
+    lng: float
     author: str
     title: str
     body: str
@@ -143,8 +154,7 @@ class TraditionOut(Tradition):
 
 
 class TraditionCreate(BaseModel):
-    area_slug: str
-    poi_slug: Optional[str] = None
+    place_key: str = Field(min_length=3, max_length=80)
     author: str = Field(min_length=1, max_length=40)
     title: str = Field(min_length=1, max_length=80)
     body: str = Field(min_length=10, max_length=800)
@@ -163,22 +173,12 @@ class ModerateIn(BaseModel):
     action: Literal["verify", "reject"]
 
 
-TRADITION_PROJECTION = {"_id": 0, "voters": 0, "voter_ips": 0}
-DEVICES_PER_IP_PER_HOUR = 20
-VOTES_PER_IP_PER_TRADITION = 3
+TRADITION_PROJECTION = {"_id": 0, "voters": 0, "voter_ips": 0, "location": 0}
 
-# ------------------------------ SEED / AUTH ----------------------------------
+# ------------------------------ AUTH / HELPERS ------------------------------
 
 
-async def seed() -> None:
-    # Starter content is (re)applied only when SEED_VERSION goes up, so admin edits made
-    # through the content API are not overwritten on every restart.
-    meta = await db.meta.find_one({"_id": "seed"}) or {}
-    op = "$set" if meta.get("version", 0) < SEED_VERSION else "$setOnInsert"
-    for coll, items in (("regions", REGIONS), ("areas", AREAS), ("pois", POIS)):
-        for item in items:
-            await db[coll].update_one({"slug": item["slug"]}, {op: item}, upsert=True)
-    await db.meta.update_one({"_id": "seed"}, {"$set": {"version": SEED_VERSION}}, upsert=True)
+async def seed_admin() -> None:
     await db.admins.update_one(
         {"email": ADMIN_EMAIL},
         {"$set": {"email": ADMIN_EMAIL, "password_hash": password_hash.hash(ADMIN_PASSWORD), "role": "admin", "enabled": True}},
@@ -207,37 +207,6 @@ async def require_admin(token: Annotated[str, Depends(oauth2_scheme)]):
     return admin
 
 
-# ------------------------------ HELPERS -------------------------------------
-
-
-def haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    r = 6371000.0
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-def clean_for_tts(text: str) -> str:
-    text = emoji.replace_emoji(text, replace="")
-    text = re.sub(r"https?://\S+", "", text)
-    text = re.sub(r"[*_#>~|]", "", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-async def get_or_404(collection: str, slug: str) -> dict:
-    doc = await db[collection].find_one({"slug": slug}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail=f"{collection[:-1].capitalize()} not found")
-    return doc
-
-
-async def list_traditions(query: dict, device_token: Optional[str], limit: int = 100) -> List[TraditionOut]:
-    device_id = device_from_token(device_token)
-    docs = await db.traditions.find(query, {"_id": 0, "voter_ips": 0}).sort("created_at", -1).to_list(limit)
-    return [TraditionOut(**{k: v for k, v in d.items() if k != "voters"}, has_voted=bool(device_id and device_id in d.get("voters", []))) for d in docs]
-
-
 def client_ip(request: Request) -> str:
     """Client IP as seen by our own proxies. Entries left of the trusted hops are client-supplied and ignored."""
     parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
@@ -258,6 +227,76 @@ def device_from_token(token: Optional[str]) -> Optional[str]:
     return payload.get("sub") if payload.get("typ") == "device" else None
 
 
+def clean_for_tts(text: str) -> str:
+    text = emoji.replace_emoji(text, replace="")
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"[*_#>~|]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+async def list_traditions(query: dict, device_token: Optional[str], limit: int = 100) -> List[TraditionOut]:
+    device_id = device_from_token(device_token)
+    docs = await db.traditions.find(query, {"_id": 0, "voter_ips": 0, "location": 0}).sort("created_at", -1).to_list(limit)
+    return [TraditionOut(**{k: v for k, v in d.items() if k != "voters"}, has_voted=bool(device_id and device_id in d.get("voters", []))) for d in docs]
+
+
+async def get_place(key: str) -> Place:
+    doc = await db.places.find_one({"key": key}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Place not found")
+    return Place(**doc)
+
+
+async def resolve_place(lat: float, lng: float) -> Place:
+    """Reverse-geocode with a ~11 m cache cell so a crowd on one street costs one lookup."""
+    cell = f"{round(lat, 4)},{round(lng, 4)}"
+    cached = await db.geocode_cache.find_one({"cell": cell}, {"_id": 0})
+    if cached:
+        return await get_place(cached["key"])
+    try:
+        rev = await he.reverse_geocode(lat, lng)
+    except Exception as exc:
+        logger.error("reverse geocode failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Couldn't work out where this is right now. Try again in a moment.") from exc
+    if not rev:
+        raise HTTPException(status_code=404, detail="No mapped place here")
+    p = he.place_from_reverse(rev)
+    existing = await db.places.find_one({"key": p["key"]}, {"_id": 0})
+    if existing:
+        place = Place(**existing)
+    else:
+        place = Place(**{k: p[k] for k in ("key", "title", "subtitle", "city", "state", "country", "display_name", "osm_url")}, lat=lat, lng=lng)
+        await db.places.update_one({"key": place.key}, {"$setOnInsert": {**place.model_dump(), "levels": p["levels"]}}, upsert=True)
+    await db.geocode_cache.update_one({"cell": cell}, {"$set": {"cell": cell, "key": place.key}}, upsert=True)
+    return place
+
+
+_building: dict[str, asyncio.Task] = {}
+
+
+async def _build_history(key: str) -> dict:
+    place_doc = await db.places.find_one({"key": key}, {"_id": 0})
+    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"])
+    has_text_sources = any(s["type"] != "openstreetmap" for s in sources)
+    body = he.empty_history()
+    if has_text_sources:
+        try:
+            body = await asyncio.wait_for(he.compose_history(EMERGENT_LLM_KEY, place_doc, sources), timeout=90)
+        except Exception as exc:
+            logger.error("compose failed for %s: %s", key, exc)
+            raise HTTPException(status_code=502, detail="Couldn't put this history together right now. Try again.") from exc
+    used = {i for e in body["eras"] for i in e["sources"]} | {i for d in body["did_you_know"] for i in d["sources"]}
+    history = {
+        "key": key,
+        **body,
+        "sources": [{k: s[k] for k in ("id", "type", "title", "url", "scope")} for s in sources if s["id"] in used or s["type"] == "openstreetmap"],
+        "has_records": any(e["text"] for e in body["eras"]),
+        "built_at": datetime.now(timezone.utc),
+    }
+    await db.histories.update_one({"key": key}, {"$set": history}, upsert=True)
+    return history
+
+
 # ------------------------------ APP / ROUTES --------------------------------
 
 app = FastAPI()
@@ -274,81 +313,73 @@ api = APIRouter(prefix="/api")
 
 @api.get("/")
 async def root():
-    return {"message": "Yatra API"}
+    return {"message": "NVM API"}
 
 
 @api.get("/eras")
 async def eras():
-    return [{"key": k, "label": v} for k, v in ERAS.items()]
+    return [{"key": k, "label": v} for k, v in he.ERAS]
 
 
-@api.get("/regions", response_model=List[dict])
-async def regions():
-    docs = await db.regions.find({}, {"_id": 0}).sort("name", 1).to_list(100)
-    counts = {c["_id"]: c["n"] for c in await db.areas.aggregate([{"$group": {"_id": "$region_slug", "n": {"$sum": 1}}}]).to_list(100)}
-    return [{**Region(**d).model_dump(), "area_count": counts.get(d["slug"], 0), "has_stories": bool(d.get("eras"))} for d in docs]
+@api.get("/look")
+async def look(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    heading: Optional[float] = Query(None, ge=0, le=360),
+):
+    """What is the phone looking at? With a heading, we look a few metres ahead along it."""
+    t_lat, t_lng = he.offset_point(lat, lng, heading, FACING_DISTANCE_M) if heading is not None else (lat, lng)
+    place = await resolve_place(t_lat, t_lng)
+    cached = await db.histories.find_one({"key": place.key}, {"_id": 0})
+    return {"place": place, "facing": {"lat": t_lat, "lng": t_lng}, "history": History(**cached) if cached else None}
 
 
-@api.get("/regions/{slug}")
-async def region_detail(slug: str):
-    region = Region(**await get_or_404("regions", slug))
-    areas = await db.areas.find({"region_slug": slug}, {"_id": 0}).sort("name", 1).to_list(200)
-    return {"region": region, "areas": [Area(**a) for a in areas]}
+@api.get("/history/{key}", response_model=History)
+async def history(key: str, request: Request):
+    cached = await db.histories.find_one({"key": key}, {"_id": 0})
+    if cached:
+        return History(**cached)
+    await get_place(key)
+    task = _building.get(key)
+    if not task:
+        ip = client_ip(request)
+        since = datetime.now(timezone.utc) - timedelta(hours=1)
+        if await db.build_log.count_documents({"ip": ip, "created_at": {"$gte": since}}) >= BUILDS_PER_IP_PER_HOUR:
+            raise HTTPException(status_code=429, detail="You've explored a lot of new places this hour. Try again a little later.")
+        log_id = (await db.build_log.insert_one({"ip": ip, "key": key, "created_at": datetime.now(timezone.utc)})).inserted_id
+
+        async def build_and_uncount_failures():
+            try:
+                return await _build_history(key)
+            except Exception:
+                await db.build_log.delete_one({"_id": log_id})  # a failed build shouldn't use up someone's allowance
+                raise
+
+        task = asyncio.create_task(build_and_uncount_failures())
+        _building[key] = task
+        task.add_done_callback(lambda _t, k=key: _building.pop(k, None))
+    return History(**await asyncio.shield(task))
 
 
-@api.get("/areas/{slug}")
-async def area_detail(slug: str, device_token: Optional[str] = None):
-    area = Area(**await get_or_404("areas", slug))
-    pois = await db.pois.find({"area_slug": slug}, {"_id": 0}).sort("name", 1).to_list(500)
-    verified = await list_traditions({"area_slug": slug, "status": "verified"}, device_token)
-    return {"area": area, "pois": [Poi(**p) for p in pois], "did_you_know": verified, "eras": [{"key": k, "label": ERAS.get(k, k)} for k in area.era_keys]}
+@api.get("/places")
+async def places_by_key(keys: str = Query("", max_length=4000)):
+    wanted = [k for k in keys.split(",") if k][:100]
+    docs = await db.places.find({"key": {"$in": wanted}}, {"_id": 0, "levels": 0}).to_list(100) if wanted else []
+    return [Place(**d) for d in docs]
 
 
-@api.get("/pois")
-async def pois_by_slugs(slugs: str = Query("", max_length=4000)):
-    wanted = [s for s in slugs.split(",") if s][:100]
-    if not wanted:
-        return []
-    docs = await db.pois.find({"slug": {"$in": wanted}}, {"_id": 0}).to_list(100)
-    return [Poi(**d) for d in docs]
+@api.get("/places/{key}", response_model=Place)
+async def place_detail(key: str):
+    return await get_place(key)
 
 
-@api.get("/pois/{slug}")
-async def poi_detail(slug: str, device_token: Optional[str] = None):
-    poi = Poi(**await get_or_404("pois", slug))
-    area = Area(**await get_or_404("areas", poi.area_slug))
-    verified = await list_traditions({"poi_slug": slug, "status": "verified"}, device_token)
-    pending = await list_traditions({"poi_slug": slug, "status": "pending"}, device_token)
-    return {
-        "poi": poi,
-        "area": {"slug": area.slug, "name": area.name},
-        "eras": [{"key": k, "label": ERAS.get(k, k)} for k in area.era_keys],
-        "did_you_know": verified,
-        "community": pending,
-        "upvote_threshold": UPVOTE_THRESHOLD,
-    }
-
-
-@api.get("/nearby")
-async def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(..., ge=-180, le=180)):
-    areas = await db.areas.find({}, {"_id": 0}).to_list(1000)
-    ranked = sorted(({**a, "distance_m": round(haversine_m(lat, lng, a["lat"], a["lng"]))} for a in areas), key=lambda a: a["distance_m"])
-    inside = next((a for a in ranked if a["distance_m"] <= a["radius_m"] and a.get("eras")), None)
-    nearest_with_stories = next((a for a in ranked if a.get("eras")), None)
-    result = {"inside": None, "nearest": None, "areas": [{**Area(**a).model_dump(), "distance_m": a["distance_m"]} for a in ranked[:10]]}
-    if nearest_with_stories:
-        result["nearest"] = {"slug": nearest_with_stories["slug"], "name": nearest_with_stories["name"], "distance_m": nearest_with_stories["distance_m"]}
-    if inside:
-        pois = await db.pois.find({"area_slug": inside["slug"]}, {"_id": 0}).to_list(500)
-        poi_out = sorted(({**Poi(**p).model_dump(), "distance_m": round(haversine_m(lat, lng, p["lat"], p["lng"]))} for p in pois), key=lambda p: p["distance_m"])
-        verified = await db.traditions.find({"area_slug": inside["slug"], "status": "verified"}, TRADITION_PROJECTION).sort("created_at", -1).to_list(200)
-        result["inside"] = {
-            "area": Area(**inside).model_dump(),
-            "eras": [{"key": k, "label": ERAS.get(k, k)} for k in inside["era_keys"]],
-            "pois": poi_out,
-            "did_you_know": [Tradition(**t).model_dump(mode="json") for t in verified],
-        }
-    return result
+@api.get("/search")
+async def search(q: str = Query(..., min_length=2, max_length=120)):
+    try:
+        return await he.search_places(q)
+    except Exception as exc:
+        logger.error("search failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Search is unavailable right now. Try again.") from exc
 
 
 # ---- Oral traditions (community) ----
@@ -357,24 +388,25 @@ async def nearby(lat: float = Query(..., ge=-90, le=90), lng: float = Query(...,
 @api.get("/traditions", response_model=List[TraditionOut])
 async def traditions(
     status_: Literal["pending", "verified"] = Query("pending", alias="status"),
-    area_slug: Optional[str] = None,
+    place_key: Optional[str] = None,
+    lat: Optional[float] = Query(None, ge=-90, le=90),
+    lng: Optional[float] = Query(None, ge=-180, le=180),
+    radius_m: int = Query(STORY_RADIUS_M, ge=10, le=5000),
     device_token: Optional[str] = None,
 ):
     q: dict = {"status": status_}
-    if area_slug:
-        q["area_slug"] = area_slug
+    if place_key:
+        q["place_key"] = place_key
+    elif lat is not None and lng is not None:
+        q["location"] = {"$geoWithin": {"$centerSphere": [[lng, lat], radius_m / 6378100]}}
     return await list_traditions(q, device_token)
 
 
 @api.post("/traditions", response_model=Tradition)
 async def create_tradition(body: TraditionCreate):
-    await get_or_404("areas", body.area_slug)
-    if body.poi_slug:
-        poi = await get_or_404("pois", body.poi_slug)
-        if poi["area_slug"] != body.area_slug:
-            raise HTTPException(status_code=400, detail="This place is not in the selected area")
-    t = Tradition(**body.model_dump())
-    await db.traditions.insert_one({**t.model_dump(), "voters": [], "voter_ips": []})
+    place = await get_place(body.place_key)
+    t = Tradition(**body.model_dump(), place_title=place.title, lat=place.lat, lng=place.lng)
+    await db.traditions.insert_one({**t.model_dump(), "location": {"type": "Point", "coordinates": [place.lng, place.lat]}, "voters": [], "voter_ips": []})
     return t
 
 
@@ -397,9 +429,9 @@ async def upvote(tid: str, body: VoteIn, request: Request):
     ip = client_ip(request)
     existing = await db.traditions.find_one({"id": tid}, {"_id": 0})
     if not existing:
-        raise HTTPException(status_code=404, detail="Tradition not found")
+        raise HTTPException(status_code=404, detail="Story not found")
     if existing["status"] != "pending":
-        raise HTTPException(status_code=409, detail="Voting is closed for this tradition")
+        raise HTTPException(status_code=409, detail="Voting is closed for this story")
     if device_id in existing.get("voters", []):
         raise HTTPException(status_code=409, detail="You have already upvoted this")
     if existing.get("voter_ips", []).count(ip) >= VOTES_PER_IP_PER_TRADITION:
@@ -413,7 +445,7 @@ async def upvote(tid: str, body: VoteIn, request: Request):
             "$expr": {"$lt": [{"$size": {"$filter": {"input": {"$ifNull": ["$voter_ips", []]}, "cond": {"$eq": ["$$this", ip]}}}}, VOTES_PER_IP_PER_TRADITION]},
         },
         {"$addToSet": {"voters": device_id}, "$push": {"voter_ips": ip}, "$inc": {"upvotes": 1}},
-        projection={"_id": 0, "voter_ips": 0},
+        projection={"_id": 0, "voter_ips": 0, "location": 0},
         return_document=True,
     )
     if not doc:
@@ -422,6 +454,11 @@ async def upvote(tid: str, body: VoteIn, request: Request):
         await db.traditions.update_one({"id": tid, "status": "pending"}, {"$set": {"status": "verified", "verified_by": "community"}})
         doc.update(status="verified", verified_by="community")
     return TraditionOut(**{k: v for k, v in doc.items() if k != "voters"}, has_voted=True)
+
+
+@api.get("/config")
+async def config():
+    return {"upvote_threshold": UPVOTE_THRESHOLD, "story_radius_m": STORY_RADIUS_M}
 
 
 # ---- Admin ----
@@ -456,45 +493,30 @@ async def moderate(tid: str, body: ModerateIn, admin=Depends(require_admin)):
     update = {"status": "verified", "verified_by": "admin"} if body.action == "verify" else {"status": "rejected", "verified_by": None}
     doc = await db.traditions.find_one_and_update({"id": tid}, {"$set": update}, projection=TRADITION_PROJECTION, return_document=True)
     if not doc:
-        raise HTTPException(status_code=404, detail="Tradition not found")
+        raise HTTPException(status_code=404, detail="Story not found")
     return Tradition(**doc)
 
 
-@api.put("/admin/regions/{slug}", response_model=Region)
-async def upsert_region(slug: str, body: Region, admin=Depends(require_admin)):
-    data = {**body.model_dump(), "slug": slug}
-    await db.regions.update_one({"slug": slug}, {"$set": data}, upsert=True)
-    return Region(**data)
-
-
-@api.put("/admin/areas/{slug}", response_model=Area)
-async def upsert_area(slug: str, body: Area, admin=Depends(require_admin)):
-    await get_or_404("regions", body.region_slug)
-    data = {**body.model_dump(), "slug": slug}
-    await db.areas.update_one({"slug": slug}, {"$set": data}, upsert=True)
-    return Area(**data)
-
-
-@api.put("/admin/pois/{slug}", response_model=Poi)
-async def upsert_poi(slug: str, body: Poi, admin=Depends(require_admin)):
-    await get_or_404("areas", body.area_slug)
-    data = {**body.model_dump(), "slug": slug}
-    await db.pois.update_one({"slug": slug}, {"$set": data}, upsert=True)
-    return Poi(**data)
+@api.delete("/admin/history/{key}")
+async def rebuild_history(key: str, admin=Depends(require_admin)):
+    """Drop a cached history so the next visit rebuilds it from fresh sources."""
+    res = await db.histories.delete_one({"key": key})
+    return {"deleted": res.deleted_count}
 
 
 # ---- Narration ----
 
 
-@api.post("/pois/{slug}/narrate")
-async def narrate_poi(slug: str, voice: Literal["fable", "sage", "onyx", "coral"] = "fable"):
-    poi = Poi(**await get_or_404("pois", slug))
-    if not poi.eras:
+@api.post("/history/{key}/narrate")
+async def narrate(key: str, voice: Literal["fable", "sage", "onyx", "coral"] = "fable"):
+    doc = await db.histories.find_one({"key": key}, {"_id": 0})
+    if not doc or not doc.get("has_records"):
         raise HTTPException(status_code=404, detail="No story to narrate yet")
-    parts = [f"{poi.name}."] + [f"{ERAS.get(e.key, e.key).split(' · ')[0]}. {e.title}. {e.description}" for e in poi.eras]
+    place = await get_place(key)
+    parts = [f"{place.title}."] + [f"{e['label']}. {e['text']}" for e in doc["eras"] if e["text"]]
     text = clean_for_tts(" ".join(parts))[:3800]
-    key = hashlib.sha256(f"{voice}|tts-1|mp3|{text}".encode()).hexdigest()
-    path = TTS_CACHE_DIR / f"{key}.mp3"
+    audio_key = hashlib.sha256(f"{voice}|tts-1|mp3|{text}".encode()).hexdigest()
+    path = TTS_CACHE_DIR / f"{audio_key}.mp3"
     if not path.exists():
         try:
             audio = await asyncio.wait_for(
@@ -502,10 +524,10 @@ async def narrate_poi(slug: str, voice: Literal["fable", "sage", "onyx", "coral"
                 timeout=60,
             )
         except Exception as exc:
-            logger.error("tts failed for %s: %s", slug, exc)
+            logger.error("tts failed for %s: %s", key, exc)
             raise HTTPException(status_code=502, detail="Narration unavailable right now") from exc
         path.write_bytes(audio)
-    return {"audio_url": f"/api/tts/{key}.mp3"}
+    return {"audio_url": f"/api/tts/{audio_key}.mp3"}
 
 
 @api.get("/tts/{key}.mp3")
@@ -526,7 +548,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 @app.on_event("startup")
 async def startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
-    await seed()
+    await seed_admin()
 
 
 @app.on_event("shutdown")
