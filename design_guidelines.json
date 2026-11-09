@@ -1,0 +1,200 @@
+{
+  "app_name": "Yatra",
+  "personality": "3 Editorial Mobile LIGHT",
+  "personality_one_liner": "An elegant, magazine-like journey through India's rich heritage, blending immersive exploration with respectful, storytelling-led design.",
+  "color": {
+    "surface": "#F9F6F0",
+    "onSurface": "#1A2130",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A2130",
+    "surfaceTertiary": "#EFE9DF",
+    "onSurfaceTertiary": "#1A2130",
+    "surfaceInverse": "#1A2130",
+    "onSurfaceInverse": "#F9F6F0",
+    "brand": "#C85A32",
+    "brandPrimary": "#C85A32",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E37B40",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#D4AF37",
+    "onBrandTertiary": "#1A2130",
+    "success": "#4F7942",
+    "onSuccess": "#FFFFFF",
+    "warning": "#E37B40",
+    "onWarning": "#FFFFFF",
+    "error": "#9E3B33",
+    "onError": "#FFFFFF",
+    "info": "#2C3E50",
+    "onInfo": "#FFFFFF",
+    "border": "#E5DED5",
+    "borderStrong": "#D1C7B9",
+    "divider": "#E5DED5",
+    "muted": "#5C667A",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "Cormorant Garamond",
+    "textFontFamily": "DM Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Magazine-like spacing rhythms with generous vertical breathing room. Let typography, whitespace, content, and imagery carry the personality. No dense card-heavy layouts.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 0,
+    "md": 4,
+    "lg": 8,
+    "pill": 999
+  },
+  "shadow_tier": 0,
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [],
+    "dont's": [
+      "No glassmorphism. Editorial personality relies on solid surfaces, fine borders, and generous whitespace instead of digital blur."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "none",
+      "android": "none",
+      "low_end_android_fallback": "none"
+    },
+    "image": "expo-image",
+    "blur": "none",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home/Discover",
+      "purpose": "Discover nearby heritage sites and curated Indian destinations.",
+      "states": {
+        "loading": "Skeleton images with subtle pulse, text lines as grey blocks.",
+        "empty": "Illustration of a map/compass with text 'No nearby sites found. Try searching.'",
+        "error": "Text 'Unable to load destinations' with a Retry button."
+      },
+      "layout": "Header with 'Yatra' in large display serif. Top section: 'Nearby' with a horizontal scroll of full-bleed image cards. Below: 'Curated Destinations' using a vertical list of edge-to-edge images or large editorial cards with thin borders, titles inside the image (with gradient scrim) or elegantly below. Images must have gradient scrims if text is overlaid."
+    },
+    {
+      "name": "Place Detail",
+      "purpose": "Deep dive into the history of a specific site.",
+      "states": {
+        "loading": "Centered spinner over a faded image placeholder.",
+        "empty": "Not applicable (data-driven).",
+        "error": "Toast or inline text 'Failed to load details'."
+      },
+      "layout": "Cinematic hero image with gradient-to-dark scrim. Title in Cormorant Garamond overlaid at the bottom of the hero. Below image: A vertical timeline using a clean line and dots for dates (1600s, 1700s). Distinct sections for '360° Panorama View', 'AR Camera', and 'Did you know?' trivia card. A sticky mini audio player at the bottom for narration."
+    },
+    {
+      "name": "360° Viewer",
+      "purpose": "Immersive panoramic viewer.",
+      "states": {
+        "loading": "Spinner centered on a dark screen.",
+        "empty": "N/A",
+        "error": "Error message with 'Go Back' button."
+      },
+      "layout": "Full-screen image with an interactive overlay. Floating action buttons or info hotspots anchored on the image. Solid surface secondary back button at the top safe area."
+    },
+    {
+      "name": "AR Camera View",
+      "purpose": "Camera view with historical fact overlays.",
+      "states": {
+        "loading": "Camera permission prompt or initializing spinner.",
+        "empty": "N/A",
+        "error": "Camera access denied message."
+      },
+      "layout": "Full-screen camera view (mocked via a clean background image). Floating solid cards (surfaceSecondary with border) anchored to screen points showing historical facts. Segmented control or a prominent 'Exit AR' button at the bottom."
+    },
+    {
+      "name": "Add Contribution",
+      "purpose": "Form to add a 'Did you know?' local tradition/trivia.",
+      "states": {
+        "loading": "Spinner overlay on submit.",
+        "empty": "N/A",
+        "error": "Inline validation errors."
+      },
+      "layout": "Editorial form. Large serif title 'Share a Tradition'. Clean text inputs with border only on bottom or simple surfaceTertiary blocks. Image upload placeholder. Submit button sticky at bottom inside KeyboardAvoidingView."
+    },
+    {
+      "name": "Search",
+      "purpose": "Search heritage sites by name/city/state.",
+      "states": {
+        "loading": "Spinner below search bar.",
+        "empty": "Message 'No sites match your search.'",
+        "error": "Search failed message."
+      },
+      "layout": "Clean search bar at top safe area. Recent searches or popular tags below as simple text list. List view of search results."
+    },
+    {
+      "name": "Profile/My Journey",
+      "purpose": "Track visited places and saved spots.",
+      "states": {
+        "loading": "Spinner in center.",
+        "empty": "'You haven't visited any sites yet.'",
+        "error": "Failed to load profile."
+      },
+      "layout": "Profile header with a vintage compass map background. User stats centered. Tabs for 'Visited' and 'Saved'. Grid or list of beautifully framed photos of visited sites below."
+    }
+  ],
+  "images": {
+    "taj_mahal": {
+      "url": "https://images.unsplash.com/photo-1587135941948-670b381f08ce?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwxfHxUYWolMjBNYWhhbCUyMGdvbGRlbiUyMGhvdXIlMjBpbGx1bWluYXRlZHxlbnwwfHx8fDE3OTQyMTYxNTJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "The Taj Mahal in Agra under a warm golden hour sky"
+    },
+    "hampi": {
+      "url": "https://images.unsplash.com/photo-1696239109250-a83577abcbeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxIYW1waSUyMHN0b25lJTIwY2hhcmlvdCUyMGhlcml0YWdlfGVufDB8fHx8MTc5NDIxNjE1Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "a large stone structure with steps leading up to it"
+    },
+    "mysore_palace": {
+      "url": "https://images.unsplash.com/photo-1764858147489-47a546c6e8ca?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxNeXNvcmUlMjBwYWxhY2UlMjBpbGx1bWluYXRlZCUyMG5pZ2h0fGVufDB8fHx8MTc5NDIxNjE1Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Illuminated palace complex at night with city lights"
+    },
+    "konark": {
+      "url": "https://images.unsplash.com/photo-1639980290886-6bdd61c7582b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODd8MHwxfHNlYXJjaHwxfHxLb25hcmslMjBzdW4lMjB0ZW1wbGUlMjB3aGVlbHxlbnwwfHx8fDE3OTQyMTYxNTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "a large wheel on the side of a building"
+    },
+    "khajuraho": {
+      "url": "https://images.unsplash.com/photo-1672215055915-e6143dc70e6a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxLaGFqdXJhaG8lMjB0ZW1wbGUlMjBkZXRhaWxzfGVufDB8fHx8MTc5NDIxNjE1OHww&ixlib=rb-4.1.0&q=85",
+      "alt": "a very tall building with statues on it's sides"
+    },
+    "red_fort": {
+      "url": "https://images.unsplash.com/photo-1713729991304-d0b6c328560e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxSZWQlMjBGb3J0JTIwRGVsaGklMjBoZXJpdGFnZSUyMGFyY2hpdGVjdHVyZXxlbnwwfHx8fDE3OTQyMTYxNjV8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "a large building with two towers on top of it"
+    },
+    "360_bg": {
+      "url": "https://images.unsplash.com/photo-1561042771-abb14f50b8f4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwxfHxJbmRpYW4lMjBoZXJpdGFnZSUyMGFyY2hpdGVjdHVyZSUyMHBhdHRlcm4lMjBpbnRlcmlvciUyMHdpZGV8ZW58MHx8fHwxNzk0MjE2MTU5fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "blue and brown building interior"
+    },
+    "profile_bg": {
+      "url": "https://images.unsplash.com/photo-1570137493662-409569bb1c01?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHx2aW50YWdlJTIwY29tcGFzcyUyMGhlcml0YWdlJTIwbWFwfGVufDB8fHx8MTc5NDIxNjE2NXww&ixlib=rb-4.1.0&q=85",
+      "alt": "round black compass"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the Editorial Mobile LIGHT personality. Use Cormorant Garamond for headers and DM Sans for body text.",
+    "Do NOT use glassmorphism. Rely on solid surfaceSecondary and thin borders (#E5DED5) to create elevation and structure.",
+    "Use generous whitespace. Avoid cramped, card-heavy layouts. Let the beautiful imagery and elegant typography breathe.",
+    "For images with overlaid text (e.g., Place Detail hero, Home cards), you MUST use a vertical gradient scrim (transparent to surfaceInverse) to ensure readable text.",
+    "The audio player should be a sticky bottom element (solid background, top border) on the Place Detail screen, not a glass pane.",
+    "AR Camera View can be mocked with an immersive image background and floating informational UI cards.",
+    "Ensure all primary CTAs are sticky at the bottom with proper safe-area padding.",
+    "Deep Indigo is used for text to provide high contrast without defaulting to pure black, maintaining the heritage warmth."
+  ]
+}

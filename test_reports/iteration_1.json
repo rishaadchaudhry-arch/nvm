@@ -1,0 +1,47 @@
+{
+  "summary": "Tested the backend (16 of 17 pytest checks pass) and the Expo web flows at 390x844. All the core features work. Places, nearby, search, detail and 404 all respond correctly. The LLM timeline (gpt-5.6-terra) returns real dated events: Red Fort took about 8s and Hampi about 11s on first load, and cached calls are fast. Trivia create and list work. Narration returns an audio_url, and fetching it returns audio/mpeg. In the UI: Discover with curated cards, Nearby (tested with a mocked Delhi location), detail sections, 360 hotspot label, back buttons, AR fact paging, contribute validation and submit, Search 'Agra', Journey Visited/Saved, and narration play/pause all work. Main issues: (1) wrong panorama/AR images for 5 places, (2) blank trivia accepted by the API, (3) a failed LLM call is cached forever, (4) no error state for unknown slugs or failed API calls, (5) 40px touch targets. No deprecated Expo packages found (uses expo-audio and expo-camera).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/places/{slug}/trivia", "issue": "No validation. Empty author/title/body ('') is accepted with 200, and there is no max length. The 10-character minimum is enforced only on the frontend. TriviaCreate.place_id is required but ignored (the slug is used instead)."},
+      {"endpoint": "GET /api/places/{slug}/timeline", "issue": "generate_timeline() upserts the hard-coded fallback ('Fun fact coming soon.', 1 event) into db.timelines when the LLM fails. One temporary LLM failure leaves that place stuck on placeholder history forever. Do not cache the fallback (or give it a TTL / is_fallback flag)."},
+      {"endpoint": "GET /api/tts/{key}.mp3", "issue": "path.read_bytes() blocks inside an async handler (use FileResponse). The TTS cache is on local disk, so it disappears on redeploy (it regenerates, so this is acceptable)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Panorama / AR web fallback images", "issue": "panorama_image is reused across places: Red Fort, Mysore Palace, Khajuraho, Qutub Minar and Golden Temple all use photo-1561042771 (a Mysore Palace interior). The Golden Temple 360 view shows Mysore Palace. Hampi and Konark share photo-1587474260584. ar.tsx also uses panorama_image, so AR is wrong too.", "testID": "hotspot-0", "priority": "HIGH"},
+      {"component": "Place detail unknown slug", "issue": "/place/unknown-xyz shows an endless spinner with no back button (headerShown false). The 404 is never handled.", "testID": "back-btn", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Error states", "issue": "Discover, Search and the detail timeline have no isError handling. A failed timeline renders nothing, and a failed narration silently resets to idle with no message.", "affected_testIDs": ["play-narrate-btn", "big-card-*", "result-row-*"]}
+    ],
+    "design_issues": [
+      {"screen": "Place detail / Panorama / AR", "issues": ["back-btn, save-btn, panorama-back, ar-back-btn and the hotspot-* buttons are 40x40, below the 44pt minimum (add hitSlop or make them 44)", "The gold era label (e.g. '17TH CENTURY') on the hero image and Discover cards has low contrast against bright sky/marble"]},
+      {"screen": "360 view", "issues": ["Not a real 360: a flat horizontal ScrollView over a normal photo (no wrap-around, no gyroscope). Tapping a hotspot shows only a short label, with no history."]},
+      {"screen": "Journey", "issues": ["About 100px of empty dark space above 'MY JOURNEY' in the header"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_yatra_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Give each place its own matching panorama_image (Golden Temple currently shows Mysore Palace) and use the right image in the AR web fallback",
+    "Add Pydantic validation to TriviaCreate (strip whitespace; min_length 1 for author/title, 10 for body; max lengths) and drop or make optional the unused place_id",
+    "Do not save the LLM fallback timeline in db.timelines; retry on the next request",
+    "Handle place 404 and errors in the detail/panorama/AR screens (message + back button); add error states on Discover/Search; show a toast when narration fails",
+    "Raise the icon buttons and hotspots to at least 44x44 or add hitSlop",
+    "Use FileResponse for /api/tts"
+  ],
+  "critical_code_review_comments": [
+    "server.py generate_timeline caches the exception fallback permanently",
+    "Community trivia has no moderation, rate limit or length limit, so it can be spammed",
+    "useJourney is local per-screen state; Journey reloads on focus, so it works, but saved state is not shared reactively"
+  ],
+  "updated_files": ["/app/backend/tests/test_yatra_api.py (new)"],
+  "success_rate": {"backend": "94% (16/17)", "frontend": "~90% (all requested flows pass; image and error-state issues)"},
+  "seed_data_creation": "Created 3 TEST_ trivia (2 via API on hampi, 1 via UI on hampi) and deleted all 3 by id. The test suite creates TEST_ trivia on hampi each run, and there is no delete endpoint. The Hampi and Red Fort timelines were generated and cached by the tests (real LLM data).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with EXPO_PUBLIC_BACKEND_URL exported (frontend/.env uses EXPO_PUBLIC_BACKEND_URL, not EXPO_BACKEND_URL). To test Nearby on web: context.grant_permissions(['geolocation']) + set_geolocation(28.6, 77.2). Narration plays through a JS Audio object (no <audio> in the DOM), so check the network for /api/tts/*.mp3 returning 200. Panorama scrolls with a horizontal mouse wheel, not mouse drag. Clean up TEST_ trivia via Mongo by id.",
+  "rca_of_issue": "Wrong panorama images: SEED_PLACES in server.py lines 155-227 reuse the same two Unsplash panorama URLs for 7 of the 8 places, and seed_places() $sets them on every startup."
+}

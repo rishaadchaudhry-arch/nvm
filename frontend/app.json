@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "Yatra",
+    "slug": "frontend",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "frontend",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.emergent.pastscape.ydt2z5",
+      "infoPlist": {
+        "NSCameraUsageDescription": "See heritage facts overlaid on your view",
+        "NSLocationWhenInUseUsageDescription": "Discover heritage sites around you",
+        "NSMicrophoneUsageDescription": "Record audio with your contributions"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#1A2130"
+      },
+      "package": "com.emergent.pastscape.ydt2z5",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-image.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#1A2130"
+        }
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-status-bar",
+      "expo-audio",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "See heritage facts overlaid on your view"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Discover heritage sites around you"
+        }
+      ],
+      "@react-native-vector-icons/feather"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
