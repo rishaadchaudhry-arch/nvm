@@ -4,6 +4,8 @@ aiosignal==1.4.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.16.0
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
 ast_serialize==0.13.1
 attrs==26.1.0
 bcrypt==4.1.3
@@ -79,6 +81,7 @@ pluggy==1.7.0
 propcache==0.5.4
 proto-plus==1.28.2
 protobuf==5.29.6
+pwdlib==0.3.1
 pyasn1==0.6.5
 pyasn1_modules==0.4.2
 pycodestyle==2.15.0

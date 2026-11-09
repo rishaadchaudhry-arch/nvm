@@ -1,0 +1,54 @@
+{
+  "summary": "I tested the full rebuild of Yatra v2: the backend with a pytest suite and the Expo web preview at 390x844 using mocked geolocation and the fake Chromium camera. Backend: 22 of 22 tests pass. Covered: regions (6 states, only delhi has has_stories), region and area detail (chandni-chowk has 12 pois and 7 eras, taj-mahal has empty eras), pois by slugs, 404s, nearby inside and far away (Mumbai), tradition validation (422 and 400), the upvote flow to 5 votes giving community verification, 409 on duplicate votes and on closed voting, no voters field anywhere, admin login 200/401, Bearer guard, moderate verify/reject, poi upsert, and narration with audio/mpeg. Frontend: every requested flow works. Explore here-card works in all three cases (in Chandni Chowk, far away, location off). Region to area to POI works, era chips change the block and the row subtitles, and the POI screen has then-now, the timeline, save, narration and add-tradition. Camera tab: camera-permission-btn, ar-view, 7 ar-era chips, markers, the drag-to-rotate hint, ar-sheet and ar-sheet-open to the POI all work. The verified 'Did you know?' pop-up appears in AR. Mumbai shows not-on-location and read-nearest-btn. Traditions: add-tradition-fab leads to the form and then tradition-submitted, and upvote goes 0/5 to 1/5 and disables. Admin: a wrong password shows an error, login shows the review list, verify and reject work, the verified story shows as a dyk card on its POI and in the Traditions tab, the session survives a reload, and sign-out works. Journey Visited and Saved both work. Issues found: 4 of 5 Google font URLs return 404, so the headings fall back to Times; 10 of 12 POIs share one unrelated placeholder photo (a palace ceiling, even on Jama Masjid); AR labels overlap; community verification can be gamed; the deprecated expo-router/unstable-native-tabs import; chips are 36px tall.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/traditions/{id}/upvote", "issue": "device_id is any client-supplied string of 8 to 64 characters, so one person can send 5 random ids and community-verify any story. The test suite did exactly this. There is no rate limit or IP throttle, and votes are not tied to a server-issued device id. This defeats the 5-upvote 'Did you know?' rule.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/traditions", "issue": "No rate limiting or spam protection on anonymous submissions."},
+      {"endpoint": "GET /api/regions", "issue": "has_stories comes from region.eras, not from whether any area in the region has eras. A state with story areas but no region-level eras would show 'Coming soon'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Root fonts (app/_layout.tsx:22-26)", "issue": "useFonts loads 5 hardcoded fonts.gstatic.com URLs and 4 return 404 (both CormorantGaramond weights, DMSans 500 and 700; only DMSans_400Regular returns 200). Headings render in the fallback Times serif instead of Cormorant Garamond. Use @expo-google-fonts/cormorant-garamond and @expo-google-fonts/dm-sans, or bundle the .ttf files in assets/fonts.", "testID": "n/a", "priority": "HIGH"},
+      {"component": "Camera AR markers (app/(tabs)/camera.tsx:158-166)", "issue": "Marker labels overlap. Collision avoidance uses a fixed 72px height and 76px step, but cards with 2-line titles plus a subtitle are about 110px tall. It also compares the x position from before clamping, so cards pushed to the screen edge stack on top of each other (seen with Gurudwara Sis Ganj Sahib and Bhagirath Palace).", "testID": "ar-marker-gurudwara-sis-ganj", "priority": "MEDIUM"},
+      {"component": "POI narration (app/poi/[slug].tsx:186)", "issue": "narrate-status always reads 'Hear this place's story' while playing; only the icon changes to pause. The player has no error or load-failure listener, so if playback never starts the state can stay 'loading' with the button disabled.", "testID": "narrate-status", "priority": "LOW"},
+      {"component": "Admin review card", "issue": "Shows '1 UPVOTES'; it should be singular.", "testID": "review-<id>", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Area / POI / AR sheet images", "issues": ["10 of 12 Chandni Chowk POIs share the same image (unsplash photo-1561042771-abb14f50b8f4, an ornate palace ceiling, apparently Mysore Palace). It is the hero on Jama Masjid, Town Hall, Khari Baoli, Paranthe Wali Gali and others, which is misleading for a heritage app. Only gurudwara-sis-ganj and lahori-gate have their own images."]},
+      {"screen": "Area era chips / tradition pick-area and pick-poi chips", "issues": ["Chip height is 36px, below the 44px minimum touch target."]},
+      {"screen": "Admin login", "issues": ["The placeholders 'admin@yatra.app' and '••••••••' are almost the same colour as entered text, so the fields look pre-filled."]}
+    ],
+    "react_native_issues": [
+      {"component": "expo-router/unstable-native-tabs", "issue": "Deprecated. The console warns '`expo-router/unstable-native-tabs` is deprecated. Use `expo-router/native-tabs` instead.' Reference: /app/frontend/app/(tabs)/_layout.tsx:2"},
+      {"component": "LogBox.ignoreAllLogs(true)", "issue": "Hides every warning, including deprecations, in development. Reference: /app/frontend/app/_layout.tsx:18"}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_yatra_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix fonts: replace the 404 fonts.gstatic URLs in app/_layout.tsx with @expo-google-fonts packages or bundled ttf files.",
+    "Give each Chandni Chowk POI a relevant image (Jama Masjid, Fatehpuri Masjid, Town Hall, Khari Baoli and so on) instead of the shared palace-ceiling placeholder.",
+    "Harden community upvotes: add a rate limit per IP, or issue a signed device id from the server, so one client cannot reach 5 votes alone.",
+    "Fix AR label collision in camera.tsx: measure the real card height (or use about 120px), and check overlap after clamping x.",
+    "Change the import to 'expo-router/native-tabs' in app/(tabs)/_layout.tsx.",
+    "Raise era and pick chips to at least 44px tall.",
+    "Narration: show a 'Playing…' status and handle player load errors so the state cannot stay 'loading'.",
+    "Fix the '1 upvotes' plural in admin.tsx."
+  ],
+  "critical_code_review_comments": [
+    "Votes from client-generated device_ids are trivially sybil-able (see backend critical).",
+    "Moderation is not idempotent-guarded: an admin can re-verify a rejected story or reject a community-verified one. That may be intended, but it is unlogged.",
+    "tradition/new.tsx calls qc.invalidateQueries() with no key, which refetches every cached query.",
+    "camera.tsx filters POIs to RANGE_M=600, so 3 of 12 (fatehpuri-masjid, khari-baoli, lahori-gate) never appear from 28.6556,77.2312. This is fine by design, but those places are invisible in AR from mid-street."
+  ],
+  "updated_files": ["/app/backend/tests/test_yatra_api.py (rewritten for the v2 API; old /api/places tests removed)"],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "~95% (all requested flows pass; issues are visual, font, image and security)"},
+  "seed_data_creation": "None. Test traditions (TEST_bot, TEST_ui, TEST_rej) were deleted by id; the traditions collection has 0 TEST_ documents. PUT /admin/pois/gurudwara-sis-ganj was called with its own unchanged content, so nothing changed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use EXPO_PUBLIC_BACKEND_URL (the frontend .env has no EXPO_BACKEND_URL). The fake camera works in the browser tool after granting the 'camera' permission. Playwright's headless Chromium cannot decode mp3 (NotSupportedError), so narration playback cannot be heard in tests; the backend returns audio/mpeg correctly. Drag horizontally on ar-view to rotate (a 300px drag is about 40°).",
+  "rca_of_issue": "Fonts: 4 of the gstatic file URLs in _layout.tsx are wrong or stale (curl returns 404), so expo-font fails and the 1.5s force-ready timer shows the app with system fonts. AR overlap: camera.tsx:164 uses fixed 72/76px spacing that is shorter than the real card height."
+}

@@ -1,38 +1,33 @@
-# Yatra — India's Heritage Through Time
+# Yatra: India's history through your camera
 
-## Vision
-A mobile travel companion that tells the history of any Indian heritage site you visit — with AI-generated timelines, 360° panoramic exploration, AR camera overlays, audio narration, and a community "Did You Know?" layer for local traditions. India first, global later.
+## Original problem statement
+"I want to create an app that could tell the history of each place. Wherever I travel, I open my phone, see a VR/AR view of the place I'm around, and it tells the history: exact dates, what happened in the 1700s, 1800s. Make it global later, India first. Keep an add-history section where people can add local traditions, like a sudden 'Did you know?' when you get to that place."
 
-## MVP Scope (shipped)
-- **Discover tab** – Hero header "Yatra", GPS-based "Nearby" row (haversine sorted), curated full-bleed destination cards for 8 India sites (Taj Mahal, Hampi, Red Fort, Mysore Palace, Konark, Khajuraho, Qutub Minar, Golden Temple).
-- **Place Detail** – Cinematic hero, AI-generated 2–3 sentence summary, chronological event timeline (year / title / description), "Did You Know?" card, community trivia list, sticky narration player.
-- **360° Viewer** – Wide panoramic image with glowing tappable info hotspots.
-- **AR Camera View** – Live camera feed (back camera) with floating historical fact cards; navigate chronologically through events. Falls back to panorama image on web/no-permission.
-- **Add Contribution** – "Did you know?" form (author / title / story) saved per place, surfaced in the detail screen.
-- **Search tab** – Typeahead across name/city/state.
-- **Journey tab** – AsyncStorage-backed Visited + Saved lists.
+Second brief (v2): "It's very basic. I want it to work like Wikipedia + maps through the camera. Point the camera at a place (not just monuments, normal places and states too) and see what was there in the 1700s, 1800s, 1970s and what's there now. Start with Chandni Chowk. Content can be added later, but code it properly. Add oral traditions that people can submit. Verified ones become 'Did you know?' facts."
 
-## Integrations
-- **GPT 5.6 Terra** via Emergent Universal LLM Key — generates place timeline (JSON: summary, events, did_you_know, hotspots). Cached per place in `timelines` collection.
-- **OpenAI TTS (tts-1, voice: fable)** via Emergent Universal LLM Key — narrates each place's combined history. Audio cached on disk by SHA-256 of (place, voice, model, text) and served from `/api/tts/{key}.mp3`.
-- **expo-location** — foreground permission, Balanced accuracy.
-- **expo-camera** — back camera for AR overlay.
-- **expo-audio** — streaming the narration MP3 with pause/resume.
+## User choices
+- Verification: BOTH community upvotes (5) AND admin approval
+- Places with no hand-written content: show NOTHING (no AI-written history)
+- Camera view: ONLY on location (no remote/virtual tour)
+- Narration: OpenAI TTS (tts-1, voice "fable") via the Emergent key
+- Style: warm heritage palette (Cormorant Garamond + DM Sans)
 
-## Backend (FastAPI + MongoDB)
-All routes prefixed with `/api`. Collections: `places`, `timelines`, `trivia`. Indexes on slug, place_id, name/city/state. Seeded on startup.
+## Architecture
+- Backend: FastAPI + MongoDB (`server.py`, starter content in `seed_content.py` with SEED_VERSION)
+  - Content model: regions (states) → areas (e.g. Chandni Chowk, with a GPS radius) → POIs (lat/lng + era entries keyed by era: 1650s, 1700s, 1857, 1900s, 1947, 1970s, today)
+  - Traditions: pending → verified (5 upvotes from server-signed device tokens, max 3 votes per network, or admin) / rejected
+  - Admin: JWT login (argon2 hash, account seeded from env), moderation queue, content upsert APIs (PUT /api/admin/regions|areas|pois/{slug})
+  - Narration: TTS mp3 cached on disk and served with FileResponse
+- Frontend: Expo Router. Tabs: Explore, Camera, Traditions, Journey. Stack: region, area, poi, tradition/new, admin
+  - Camera: live GPS + compass heading projects nearby POIs (600 m range, 55° FOV) onto the camera feed. An era picker changes every label. A "Did you know?" pops up within 80 m of a POI with verified traditions. On web you drag to rotate (there's no compass)
 
-Endpoints: `GET /places`, `GET /places/nearby`, `GET /places/search`, `GET /places/{slug}`, `GET /places/{slug}/timeline`, `GET|POST /places/{slug}/trivia`, `POST /places/{slug}/narrate`, `GET /tts/{key}.mp3`.
+## Implemented
+- 2026-11-09 v1: basic places, AI timeline, 360 photo, AR overlay, trivia (replaced)
+- 2026-11-09 v2: full rebuild into location-based camera + era time-travel; Chandni Chowk with 12 hand-written POIs; Delhi state timeline; 5 other states as "coming soon"; oral traditions with upvotes + admin moderation; admin content APIs; bundled fonts; real Wikimedia photos; anti-spoof IP handling (TRUSTED_PROXY_HOPS)
 
-## Design
-Editorial Mobile LIGHT — warm heritage palette (saffron `#C85A32`, parchment `#F9F6F0`, gold `#D4AF37`, deep indigo `#1A2130`). Display: Cormorant Garamond. Body: DM Sans. Solid surfaces, fine borders, generous whitespace — no glassmorphism.
-
-## Smart Business Enhancement
-Every place's community-submitted trivia is unlocked when users contribute at least one of their own, turning passive readers into contributors and compounding content as travellers roam — Yatra effectively crowdsources its moat while showing each user something no guidebook offers.
-
-## Roadmap (not in MVP)
-- Expand to global sites (same schema, add country-scoped seed data).
-- Photo upload on contributions via Emergent Object Storage.
-- True 360° WebGL viewer via pannellum in WebView.
-- Streaming TTS as text chunks.
-- Share a trip (export visited sites as a timeline card).
+## Backlog
+- P0: fact-check the starter content with a historian before launch
+- P1: admin screen for adding/editing places (APIs already exist), photo uploads on traditions, offline cache of an area
+- P1: then/now photo slider (archival images per era)
+- P2: more areas (Hauz Khas, Lodhi Road, Fort Kochi, Old Goa), global expansion, multilingual (Hindi) content + narration
+- Note: TRUSTED_PROXY_HOPS=2 matches the preview proxy chain (Cloudflare + Google LB). Re-check it in production.

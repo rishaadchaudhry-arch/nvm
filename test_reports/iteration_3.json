@@ -1,0 +1,42 @@
+{
+  "summary": "Retest of the iteration 2 fixes, covering backend and frontend. Backend: 28 of 29 pytest tests pass. The new device_token contract works: POST /api/devices returns 429 on the 21st call in an hour, a fake token gives 401, a duplicate vote gives 409, a 4th vote from one IP on one tradition gives 429, has_voted works through ?device_token=, and no response includes voters or voter_ips. The one failure is CRITICAL: client_ip() trusts the first X-Forwarded-For entry, which the client controls, so one machine can bypass both IP limits and verify a story by itself. Frontend: all requested fixes and the regression flows pass. Fonts: Cormorant Garamond and DM Sans load from the bundled ttf files (document.fonts shows them loaded and the headings render in Cormorant). The upvote in the Traditions tab works end to end (0/5 -> 1/5, aria-disabled, persists after reload, a second tap does nothing). Bhagirath Palace shows a plain dark placeholder with no broken image. The other 11 POIs each have a distinct Wikimedia image (all return 200). Camera: a full 360° drag sweep at 28.6556,77.2312 showed no label-on-label overlap. However, the left and right edge counters can sit on top of labels. Narration shows Playing… and Paused. The admin card says '1 UPVOTE' and '0 UPVOTES'. The admin placeholders are correct. Regression passed: Explore, Delhi, Chandni Chowk era chips, POI screen, tradition submit, admin wrong and right login, Verify, and the Did-you-know showing on the POI. Deprecated packages detected: none (no expo-av, expo-barcode-scanner or expo-background-fetch).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/devices, POST /api/traditions/{id}/upvote", "issue": "client_ip() (server.py:238-240) takes the FIRST X-Forwarded-For value, and the client sets that value. Verified: a curl with 'X-Forwarded-For: 10.9.9.9' was stored in device_issues as ip 10.9.9.9. With a random XFF per request, one machine gets unlimited device tokens and casts 5 votes, so a story becomes community-verified by one person (test_xff_spoof_bypass). Both the 20 devices/hour limit and the 3 votes/IP/tradition limit can be bypassed.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/traditions/{id}/upvote", "issue": "The voter_ips count check (line 398) happens before the update and is not atomic, so parallel requests from one IP can go past 3. Put the check in the find_one_and_update filter (for example with $expr and $size of the $filter on voter_ips) or use a per-IP counter document."},
+      {"endpoint": "POST /api/devices", "issue": "count_documents followed by insert_one is also a race. Low impact."},
+      {"endpoint": "seed()", "issue": "POIs are seeded with $setOnInsert, so the new image URLs in seed_content.py never reach a database that already has these POIs (for example in production). Use $set for the fields the code owns, or add a one-off migration."},
+      {"endpoint": "POI images", "issue": "Wikimedia Special:FilePath URLs serve full-size files (140-730 KB each). Add ?width=800 or similar so mobile loads less data."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AR edge counters", "issue": "The left and right edge counters ('‹ 5' and '1 ›', 44px pills at y≈300-344) are drawn on top of labels that sit at the screen edge. Examples: the Jama Masjid card at x=8 under the left pill, and Gauri Shankar Temple at x=188-367 under the right pill. Labels do not overlap each other, but these indicators cover their text. Leave a clear lane for the pills, or move them below the label band.", "testID": "ar-left-count / ar-right-count", "priority": "LOW"},
+      {"component": "AR drag on web", "issue": "When a drag starts on the 'Turn around slowly…' hint banner, the heading does not rotate, and the drag selects text across the HUD (blue highlight). Set userSelect 'none' on ar-view and pointerEvents 'none' on the hint.", "testID": "ar-view / ar-hint", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_yatra_api.py", "/app/test_reports/pytest/pytest_results_iter3.xml"],
+  "action_items": [
+    "CRITICAL: Fix client_ip() in server.py so a client cannot choose its IP. Use the right-most X-Forwarded-For entry (the one the trusted ingress appends) or X-Real-IP if the ingress sets it, and do not use the first entry. Then rerun test_xff_spoof_bypass; it should pass.",
+    "Make the 3-votes-per-IP check atomic inside the find_one_and_update filter.",
+    "Change the POI seed to $set the image (or run a migration) so existing databases get the new images.",
+    "Optional: add ?width=800 to the Wikimedia image URLs. Keep the AR edge pills from covering labels, and turn off text selection while dragging in the AR view."
+  ],
+  "critical_code_review_comments": [
+    "server.py:238 client_ip trusts a header the client controls. This is the root cause of the vote-abuse bypass.",
+    "Device and admin JWTs share JWT_SECRET. They are told apart correctly by typ and role, so this is not exploitable, but separate secrets or an aud claim would be cleaner.",
+    "Device tokens never expire. This is fine for anonymous voting, but they cannot be revoked."
+  ],
+  "updated_files": ["/app/backend/tests/test_yatra_api.py"],
+  "success_rate": {"backend": "96.5% (28/29; the failure is the XFF spoof security test)", "frontend": "100% of the requested flows; 2 minor UI issues"},
+  "seed_data_creation": "None kept. TEST_ traditions (2 from the UI, plus the pytest ones) and the device_issues rows from this run (the spoofed 10.x IPs and the browser IP 34.170.12.145 after 10:13Z) were deleted by id or ip. Nothing else was changed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Tests read EXPO_PUBLIC_BACKEND_URL (frontend/.env). They send a random spoofed X-Forwarded-For per request so they don't use up the real IP's 20 devices/hour quota, and they record the IPs in IPS for cleanup. After the XFF fix this spoofing will stop working: tests that need more than 3 votes on one tradition (test_upvote_flow_to_verified, test_device_rate_limit) will then need a different strategy, such as inserting votes directly through Mongo or using admin verify. Do not exhaust the real container IP's device quota, because the browser UI test needs a token. Camera: grant geolocation 28.6556,77.2312; drag at y≈470 (the hint near y≈540 blocks the drag). A full-screen drag turns the view 55°.",
+  "rca_of_issue": "Vote bypass: the ingress passes on the client's X-Forwarded-For header and adds the real address after it. server.py uses split(',')[0], which is the value the client supplied. Reproduce: curl -X POST $URL/api/devices -H 'X-Forwarded-For: 10.9.9.9', and the stored ip is 10.9.9.9. Fix: use the last hop, or the proxy-provided real IP."
+}

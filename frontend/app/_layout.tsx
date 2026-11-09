@@ -19,11 +19,11 @@ LogBox.ignoreAllLogs(true);
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    CormorantGaramond_500Medium: "https://fonts.gstatic.com/s/cormorantgaramond/v16/co3YmX5slCNuHLi8bLeY9MK7whWMhyjYrEPjuw.ttf",
-    CormorantGaramond_700Bold: "https://fonts.gstatic.com/s/cormorantgaramond/v16/co3YmX5slCNuHLi8bLeY9MK7whWMhyjQrkPjuw.ttf",
-    DMSans_400Regular: "https://fonts.gstatic.com/s/dmsans/v15/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAopxhTmf3ZGMZpg.ttf",
-    DMSans_500Medium: "https://fonts.gstatic.com/s/dmsans/v15/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAoiRiTmf3ZGMZpg.ttf",
-    DMSans_700Bold: "https://fonts.gstatic.com/s/dmsans/v15/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAopZuTmf3ZGMZpg.ttf",
+    CormorantGaramond_500Medium: require("../assets/fonts/CormorantGaramond-Medium.ttf"),
+    CormorantGaramond_700Bold: require("../assets/fonts/CormorantGaramond-Bold.ttf"),
+    DMSans_400Regular: require("../assets/fonts/DMSans-Regular.ttf"),
+    DMSans_500Medium: require("../assets/fonts/DMSans-Medium.ttf"),
+    DMSans_700Bold: require("../assets/fonts/DMSans-Bold.ttf"),
   });
   // Never block the UI on font fetch; system font is a fine fallback while they stream in.
   const ready = fontsLoaded || !!fontError;

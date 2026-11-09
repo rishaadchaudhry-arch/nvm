@@ -1,12 +1,16 @@
-# Yatra API regression tests: places, nearby, search, detail, timeline (LLM), trivia, narration (TTS)
+# Yatra v3 API regression (device_token upvote contract): regions/areas/pois, nearby, traditions (community + upvotes), admin auth/moderation/upsert, narration
 import os
+import uuid
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
-SLUGS = {"taj-mahal", "hampi", "red-fort", "mysore-palace", "konark-sun-temple",
-         "khajuraho", "qutub-minar", "golden-temple"}
+ADMIN_EMAIL = "admin@yatra.app"
+ADMIN_PASSWORD = "Yatra-a20d244dfc16"
+CREATED = []
+IPS = []
 
 
 @pytest.fixture(scope="module")
@@ -14,128 +18,257 @@ def s():
     return requests.Session()
 
 
-# Places list
-def test_list_places(s):
-    r = s.get(f"{API}/places", timeout=30)
-    assert r.status_code == 200
-    data = r.json()
-    assert SLUGS.issubset({p["slug"] for p in data})
-    assert all("_id" not in p for p in data)
-    names = [p["name"] for p in data]
-    assert names == sorted(names)
+@pytest.fixture(scope="module")
+def token(s):
+    r = s.post(f"{API}/auth/token", data={"username": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=20)
+    if r.status_code != 200:
+        pytest.skip("admin login failed")
+    return r.json()["access_token"]
 
 
-# Nearby sorted by distance
-def test_nearby_sorted(s):
-    r = s.get(f"{API}/places/nearby", params={"lat": 28.6, "lng": 77.2}, timeout=30)
-    assert r.status_code == 200
-    data = r.json()
-    d = [p["distance_km"] for p in data]
-    assert d == sorted(d)
-    assert data[0]["slug"] in ("red-fort", "qutub-minar")
-    assert "_id" not in data[0]
+@pytest.fixture(scope="module", autouse=True)
+def cleanup():
+    yield
+    if CREATED or IPS:
+        mc = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+        mc["test_database"].traditions.delete_many({"id": {"$in": CREATED}})
+    MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))["test_database"].device_issues.delete_many({"ip": {"$in": IPS}})
 
 
-def test_nearby_missing_params(s):
-    assert s.get(f"{API}/places/nearby", timeout=30).status_code == 422
+def make(s, **kw):
+    payload = {"area_slug": "chandni-chowk", "author": "TEST_bot", "title": "TEST story", "body": "A long enough test story body."}
+    payload.update(kw)
+    r = s.post(f"{API}/traditions", json=payload, timeout=20)
+    if r.status_code == 200:
+        CREATED.append(r.json()["id"])
+    return r
 
 
-# Search
-def test_search_delhi(s):
-    r = s.get(f"{API}/places/search", params={"q": "delhi"}, timeout=30)
-    assert r.status_code == 200
-    assert {p["slug"] for p in r.json()} == {"red-fort", "qutub-minar"}
+# Content: regions/areas/pois
+def test_regions(s):
+    d = s.get(f"{API}/regions", timeout=20).json()
+    assert len(d) == 6
+    assert [r["slug"] for r in d if r["has_stories"]] == ["delhi"]
 
 
-def test_search_agra(s):
-    r = s.get(f"{API}/places/search", params={"q": "Agra"}, timeout=30)
-    assert [p["slug"] for p in r.json()] == ["taj-mahal"]
+def test_region_detail(s):
+    d = s.get(f"{API}/regions/delhi", timeout=20).json()
+    assert d["region"]["slug"] == "delhi"
+    assert "chandni-chowk" in {a["slug"] for a in d["areas"]}
 
 
-def test_search_regex_safe(s):
-    r = s.get(f"{API}/places/search", params={"q": ".*"}, timeout=30)
-    assert r.status_code == 200 and r.json() == []
+def test_area_chandni(s):
+    d = s.get(f"{API}/areas/chandni-chowk", timeout=20).json()
+    assert len(d["pois"]) == 12
+    assert len(d["eras"]) == 7
+    assert isinstance(d["did_you_know"], list)
+    assert all("voters" not in t for t in d["did_you_know"])
 
 
-def test_search_empty_q(s):
-    assert s.get(f"{API}/places/search", params={"q": ""}, timeout=30).status_code == 422
+def test_area_taj_empty(s):
+    d = s.get(f"{API}/areas/taj-mahal", timeout=20).json()
+    assert d["eras"] == [] or d["area"]["eras"] == []
 
 
-# Detail
-def test_place_detail(s):
-    r = s.get(f"{API}/places/taj-mahal", timeout=30)
-    assert r.status_code == 200
-    p = r.json()
-    assert p["name"] == "Taj Mahal" and p["city"] == "Agra"
+def test_poi_detail(s):
+    d = s.get(f"{API}/pois/gurudwara-sis-ganj", timeout=20).json()
+    assert d["poi"]["slug"] == "gurudwara-sis-ganj"
+    assert d["area"]["slug"] == "chandni-chowk"
+    assert d["upvote_threshold"] == 5
+    assert len(d["poi"]["eras"]) > 0
 
 
-def test_place_404(s):
-    assert s.get(f"{API}/places/nope-xyz", timeout=30).status_code == 404
-    assert s.get(f"{API}/places/nope-xyz/timeline", timeout=30).status_code == 404
-    assert s.get(f"{API}/places/nope-xyz/trivia", timeout=30).status_code == 404
+def test_pois_by_slugs(s):
+    d = s.get(f"{API}/pois", params={"slugs": "gurudwara-sis-ganj,nope-x"}, timeout=20).json()
+    assert [p["slug"] for p in d] == ["gurudwara-sis-ganj"]
 
 
-# Timeline (LLM, cached)
-def test_timeline_structure_and_cache(s):
-    r = s.get(f"{API}/places/taj-mahal/timeline", timeout=120)
-    assert r.status_code == 200
-    t = r.json()
-    assert len(t["summary"]) > 20
-    assert len(t["events"]) >= 3, f"Looks like fallback timeline: {t}"
-    assert t["did_you_know"] != "Fun fact coming soon."
-    assert isinstance(t["hotspots"], list) and len(t["hotspots"]) >= 1
-    for e in t["events"]:
-        assert e["year"] and e["title"] and e["description"]
-    r2 = s.get(f"{API}/places/taj-mahal/timeline", timeout=15)
-    assert r2.status_code == 200 and r2.json() == t
-    assert r2.elapsed.total_seconds() < 5
+@pytest.mark.parametrize("path", ["regions/zzz", "areas/zzz", "pois/zzz"])
+def test_404s(s, path):
+    assert s.get(f"{API}/{path}", timeout=20).status_code == 404
 
 
-# Trivia create -> list
-def test_trivia_create_and_list(s):
-    payload = {"place_id": "x", "author": "TEST_author", "title": "TEST_title",
-               "body": "TEST_body local tradition text"}
-    r = s.post(f"{API}/places/hampi/trivia", json=payload, timeout=30)
-    assert r.status_code == 200
-    created = r.json()
-    assert created["author"] == "TEST_author" and created["id"]
-    lst = s.get(f"{API}/places/hampi/trivia", timeout=30).json()
-    assert lst[0]["id"] == created["id"]
+# Nearby
+def test_nearby_inside(s):
+    d = s.get(f"{API}/nearby", params={"lat": 28.6560, "lng": 77.2312}, timeout=20).json()
+    assert d["inside"]["area"]["name"] == "Chandni Chowk"
+    dist = [p["distance_m"] for p in d["inside"]["pois"]]
+    assert dist == sorted(dist) and len(dist) == 12
 
 
-def test_trivia_missing_fields(s):
-    r = s.post(f"{API}/places/hampi/trivia", json={"author": "TEST_a"}, timeout=30)
-    assert r.status_code == 422
+def test_nearby_mumbai(s):
+    d = s.get(f"{API}/nearby", params={"lat": 19.07, "lng": 72.87}, timeout=20).json()
+    assert d["inside"] is None
+    assert d["nearest"]["slug"] == "chandni-chowk"
 
 
-def test_trivia_empty_strings_rejected(s):
-    # Expected: blank author/title/body should be rejected with 422
-    r = s.post(f"{API}/places/hampi/trivia",
-               json={"place_id": "x", "author": "", "title": "", "body": ""}, timeout=30)
-    assert r.status_code == 422, f"Blank trivia accepted: {r.status_code}"
+# Traditions validation
+def test_tradition_validation(s):
+    assert make(s, body="   ").status_code == 422
+    assert make(s, body="short").status_code == 422
+    assert make(s, author="  ").status_code == 422
 
 
-def test_trivia_unknown_place(s):
-    r = s.post(f"{API}/places/nope-xyz/trivia",
-               json={"place_id": "x", "author": "a", "title": "b", "body": "cccccccccc"}, timeout=30)
-    assert r.status_code == 404
+def test_tradition_wrong_area_poi(s):
+    # find a poi of a different area, if any
+    r = make(s, area_slug="taj-mahal", poi_slug="gurudwara-sis-ganj")
+    assert r.status_code == 400
 
 
-# Narration (TTS)
-def test_narrate_and_audio(s):
-    r = s.post(f"{API}/places/taj-mahal/narrate", timeout=180)
+# Device tokens + upvote contract (FIX 2). Each test uses its own spoofed X-Forwarded-For so the
+# real container IP's 20/hour device quota is not used up (spoofing works: see test_xff_spoof_bypass).
+def ip():
+    x = f"10.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}.{uuid.uuid4().int % 250}"
+    IPS.append(x)
+    return x
+
+
+def dev(s, xip):
+    r = s.post(f"{API}/devices", headers={"X-Forwarded-For": xip}, timeout=20)
     assert r.status_code == 200, r.text
-    data = r.json()
-    assert data["audio_url"].startswith("/api/tts/") and data["text"]
-    a = s.get(f"{BASE_URL}{data['audio_url']}", timeout=60)
-    assert a.status_code == 200
-    assert a.headers["content-type"].startswith("audio/mpeg")
-    assert len(a.content) > 10000
+    return r.json()["device_token"]
 
 
-def test_narrate_404(s):
-    assert s.post(f"{API}/places/nope-xyz/narrate", timeout=30).status_code == 404
+def vote(s, tid, tok, xip):
+    return s.post(f"{API}/traditions/{tid}/upvote", json={"device_token": tok}, headers={"X-Forwarded-For": xip}, timeout=20)
 
 
-def test_tts_missing(s):
-    assert s.get(f"{API}/tts/doesnotexist.mp3", timeout=30).status_code == 404
+def no_voter_fields(items):
+    return all("voters" not in t and "voter_ips" not in t for t in items)
+
+
+def test_device_issue(s):
+    tok = dev(s, ip())
+    assert isinstance(tok, str) and tok.count(".") == 2
+
+
+def test_device_rate_limit(s):
+    xip = ip()
+    codes = [s.post(f"{API}/devices", headers={"X-Forwarded-For": xip}, timeout=20).status_code for _ in range(21)]
+    assert codes[:20] == [200] * 20 and codes[20] == 429
+
+
+def test_upvote_fake_token(s):
+    tid = make(s, title="TEST fake tok").json()["id"]
+    assert vote(s, tid, "not-a-real-token-xxxxxxxx", ip()).status_code == 401
+    assert vote(s, tid, "x", ip()).status_code == 422
+    assert s.post(f"{API}/traditions/{tid}/upvote", json={"device_id": "dev-1234567890"}, timeout=20).status_code == 422
+
+
+def test_upvote_same_device_twice(s):
+    tid = make(s, title="TEST dup").json()["id"]
+    xip = ip()
+    tok = dev(s, xip)
+    r1 = vote(s, tid, tok, xip)
+    assert r1.status_code == 200 and r1.json()["upvotes"] == 1 and r1.json()["has_voted"] is True
+    assert no_voter_fields([r1.json()])
+    assert vote(s, tid, tok, xip).status_code == 409
+
+
+def test_upvote_ip_limit(s):
+    tid = make(s, title="TEST ip limit").json()["id"]
+    xip = ip()
+    for _ in range(3):
+        assert vote(s, tid, dev(s, ip()), xip).status_code == 200
+    r = vote(s, tid, dev(s, ip()), xip)
+    assert r.status_code == 429
+
+
+def test_upvote_flow_to_verified(s):
+    r = make(s, poi_slug="gurudwara-sis-ganj", title="TEST upvote")
+    tid = r.json()["id"]
+    xa, xb = ip(), ip()
+    toks = [dev(s, ip()) for _ in range(6)]
+    for i in range(5):
+        rr = vote(s, tid, toks[i], xa if i < 3 else xb)
+        assert rr.status_code == 200, rr.text
+    assert rr.json()["status"] == "verified" and rr.json()["verified_by"] == "community"
+    assert vote(s, tid, toks[5], ip()).status_code == 409
+    ver = s.get(f"{API}/traditions", params={"status": "verified", "device_token": toks[0]}, timeout=20).json()
+    item = next(t for t in ver if t["id"] == tid)
+    assert item["has_voted"] is True and no_voter_fields(ver)
+    other = s.get(f"{API}/traditions", params={"status": "verified", "device_token": toks[5]}, timeout=20).json()
+    assert next(t for t in other if t["id"] == tid)["has_voted"] is False
+    poi = s.get(f"{API}/pois/gurudwara-sis-ganj", params={"device_token": toks[0]}, timeout=20).json()
+    dyk = next(t for t in poi["did_you_know"] if t["id"] == tid)
+    assert dyk["has_voted"] is True and no_voter_fields(poi["did_you_know"] + poi["community"])
+    area = s.get(f"{API}/areas/chandni-chowk", params={"device_token": toks[0]}, timeout=20).json()
+    assert no_voter_fields(area["did_you_know"])
+    near = s.get(f"{API}/nearby", params={"lat": 28.6560, "lng": 77.2312}, timeout=20).json()
+    assert no_voter_fields(near["inside"]["did_you_know"])
+
+
+def test_xff_spoof_bypass(s):
+    """SECURITY: a client can choose its own IP via X-Forwarded-For, so one machine reaches 5 votes alone."""
+    tid = make(s, title="TEST spoof").json()["id"]
+    last = None
+    for _ in range(5):
+        x = ip()
+        last = vote(s, tid, dev(s, x), x)
+    assert last.status_code == 409 or last.json()["status"] != "verified", "single client verified a story by spoofing X-Forwarded-For"
+
+
+def test_upvote_bad(s):
+    assert vote(s, "nope", dev(s, ip()), ip()).status_code == 404
+
+
+def test_pending_list_no_voters(s):
+    d = s.get(f"{API}/traditions", params={"status": "pending"}, timeout=20).json()
+    assert no_voter_fields(d) and all(t["status"] == "pending" for t in d)
+
+
+# POI images (FIX 3): distinct per POI, Bhagirath Palace intentionally empty
+def test_poi_images(s):
+    pois = s.get(f"{API}/areas/chandni-chowk", timeout=20).json()["pois"]
+    imgs = {p["slug"]: p["image"] for p in pois}
+    bp = [k for k in imgs if "bhagirath" in k]
+    assert bp and imgs[bp[0]] == ""
+    rest = [v for k, v in imgs.items() if k not in bp]
+    assert all(rest) and len(set(rest)) == len(rest)
+
+
+# Admin
+def test_login_wrong(s):
+    assert s.post(f"{API}/auth/token", data={"username": ADMIN_EMAIL, "password": "bad"}, timeout=20).status_code == 401
+
+
+def test_admin_requires_token(s):
+    assert s.get(f"{API}/admin/traditions", timeout=20).status_code == 401
+    assert s.get(f"{API}/admin/traditions", headers={"Authorization": "Bearer junk"}, timeout=20).status_code == 401
+
+
+def test_admin_moderate(s, token):
+    h = {"Authorization": f"Bearer {token}"}
+    tid = make(s, title="TEST mod").json()["id"]
+    q = s.get(f"{API}/admin/traditions", headers=h, timeout=20).json()
+    assert tid in {t["id"] for t in q} and all("voters" not in t for t in q)
+    r = s.post(f"{API}/admin/traditions/{tid}/moderate", json={"action": "verify"}, headers=h, timeout=20)
+    assert r.status_code == 200 and r.json()["status"] == "verified" and r.json()["verified_by"] == "admin"
+    tid2 = make(s, title="TEST rej").json()["id"]
+    r2 = s.post(f"{API}/admin/traditions/{tid2}/moderate", json={"action": "reject"}, headers=h, timeout=20)
+    assert r2.json()["status"] == "rejected"
+    assert s.post(f"{API}/admin/traditions/{tid2}/moderate", json={"action": "bogus"}, headers=h, timeout=20).status_code == 422
+    assert s.post(f"{API}/admin/traditions/nope/moderate", json={"action": "verify"}, headers=h, timeout=20).status_code == 404
+
+
+def test_admin_upsert_poi(s, token):
+    h = {"Authorization": f"Bearer {token}"}
+    cur = s.get(f"{API}/pois/gurudwara-sis-ganj", timeout=20).json()["poi"]
+    assert s.put(f"{API}/admin/pois/gurudwara-sis-ganj", json=cur, timeout=20).status_code == 401
+    r = s.put(f"{API}/admin/pois/gurudwara-sis-ganj", json=cur, headers=h, timeout=20)
+    assert r.status_code == 200 and r.json()["slug"] == "gurudwara-sis-ganj"
+    bad = {**cur, "area_slug": "nowhere"}
+    assert s.put(f"{API}/admin/pois/gurudwara-sis-ganj", json=bad, headers=h, timeout=20).status_code == 404
+
+
+# Narration
+def test_narrate(s):
+    r = s.post(f"{API}/pois/gurudwara-sis-ganj/narrate", timeout=90)
+    assert r.status_code == 200
+    url = r.json()["audio_url"]
+    a = s.get(f"{BASE_URL}{url}", timeout=30)
+    assert a.status_code == 200 and a.headers["content-type"].startswith("audio/mpeg") and len(a.content) > 1000
+
+
+def test_tts_404(s):
+    assert s.get(f"{API}/tts/{'0'*64}.mp3", timeout=20).status_code == 404

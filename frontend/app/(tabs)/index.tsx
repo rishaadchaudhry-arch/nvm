@@ -4,137 +4,119 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import Feather from "@react-native-vector-icons/feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, Place } from "@/src/api";
+import { api, formatDistance, type Region } from "@/src/api";
+import { usesNativeTabs } from "@/src/navigation";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
-type Coords = { lat: number; lng: number };
-
-function useNearby() {
-  const [coords, setCoords] = useState<Coords | null>(null);
-  const [denied, setDenied] = useState(false);
-
+function useCoords() {
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [state, setState] = useState<"checking" | "granted" | "denied">("checking");
   useEffect(() => {
+    // Only read location if the user already allowed it; asking happens on the Camera tab.
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") {
-          setDenied(true);
-          return;
-        }
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (!perm.granted) return setState("denied");
+        setState("granted");
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
       } catch {
-        setDenied(true);
+        setState("denied");
       }
     })();
   }, []);
+  return { coords, state };
+}
 
-  const query = useQuery({
-    queryKey: ["nearby", coords?.lat, coords?.lng],
+export default function Explore() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomChrome = usesNativeTabs ? insets.bottom : 0;
+  const { coords, state } = useCoords();
+
+  const regions = useQuery({ queryKey: ["regions"], queryFn: api.regions });
+  const nearby = useQuery({
+    queryKey: ["nearby", coords?.lat.toFixed(4), coords?.lng.toFixed(4)],
     queryFn: () => api.nearby(coords!.lat, coords!.lng),
     enabled: !!coords,
   });
 
-  return { denied, query };
-}
-
-export default function Discover() {
-  const { colors } = useTheme();
-  const styles = useStyles();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { denied, query: nearby } = useNearby();
-
-  const all = useQuery({ queryKey: ["places"], queryFn: api.listPlaces });
-
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingTop: insets.top + spacing.lg, paddingBottom: spacing["2xl"] }}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.header}>
+    <View style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + spacing.lg }]}>
         <Text style={styles.brand} testID="brand-title">Yatra</Text>
-        <Text style={styles.sub}>{"India's heritage, told through time"}</Text>
+        <Text style={styles.sub}>Point your camera. See what was here.</Text>
       </View>
-
-      <Text style={styles.sectionTitle}>Nearby</Text>
-      {denied ? (
-        <Text style={styles.hint}>Enable location to discover heritage sites around you.</Text>
-      ) : nearby.isLoading || !nearby.data ? (
-        <View style={styles.loadingRow}>
-          <ActivityIndicator color={colors.brandPrimary} />
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: bottomChrome + spacing["2xl"] }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={regions.isRefetching} onRefresh={() => { regions.refetch(); nearby.refetch(); }} tintColor={colors.brandPrimary} />}
+      >
+        <View style={styles.hereCard} testID="here-card">
+          {state === "checking" || (coords && nearby.isLoading) ? (
+            <ActivityIndicator color={colors.onSurfaceInverse} />
+          ) : nearby.data?.inside ? (
+            <>
+              <Text style={styles.hereTag}>YOU ARE IN</Text>
+              <Text style={styles.hereTitle}>{nearby.data.inside.area.name}</Text>
+              <Text style={styles.hereText}>
+                {nearby.data.inside.pois.length} places with stories around you.
+              </Text>
+              <Pressable style={styles.hereBtn} onPress={() => router.push("/camera")} testID="open-camera-btn">
+                <Feather name="camera" size={16} color={colors.onBrandPrimary} />
+                <Text style={styles.hereBtnText}>Open the camera view</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.hereTag}>{state === "denied" ? "LOCATION OFF" : "NOT AT A STORY SPOT YET"}</Text>
+              <Text style={styles.hereTitle}>
+                {state === "denied" ? "Turn on location to see what's around you" : "No stories where you are yet"}
+              </Text>
+              <Text style={styles.hereText}>
+                {nearby.data?.nearest
+                  ? `Nearest place with stories: ${nearby.data.nearest.name}, ${formatDistance(nearby.data.nearest.distance_m)} away. The camera view unlocks when you're there.`
+                  : "The camera view unlocks when you are at a place with stories, starting with Chandni Chowk, Delhi."}
+              </Text>
+              <Pressable style={styles.hereBtn} onPress={() => router.push("/area/chandni-chowk")} testID="read-chandni-chowk-btn">
+                <Text style={styles.hereBtnText}>Read about Chandni Chowk</Text>
+              </Pressable>
+            </>
+          )}
         </View>
-      ) : (
-        <FlatList
-          horizontal
-          data={nearby.data}
-          keyExtractor={(p) => p.id}
-          contentContainerStyle={styles.hList}
-          showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => <NearCard place={item} onPress={() => router.push(`/place/${item.slug}`)} />}
-        />
-      )}
 
-      <Text style={styles.sectionTitle}>Curated Destinations</Text>
-      {all.isLoading ? (
-        <View style={styles.loadingRow}>
-          <ActivityIndicator color={colors.brandPrimary} />
-        </View>
-      ) : all.isError ? (
-        <Pressable onPress={() => all.refetch()} style={styles.loadingRow} testID="discover-retry">
-          <Text style={styles.hint}>Unable to load destinations. Tap to retry.</Text>
-        </Pressable>
-      ) : (
-        all.data?.map((p) => <BigCard key={p.id} place={p} onPress={() => router.push(`/place/${p.slug}`)} />)
-      )}
-    </ScrollView>
+        <Text style={styles.sectionTitle}>States</Text>
+        {regions.isLoading ? (
+          <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brandPrimary} />
+        ) : regions.isError ? (
+          <Pressable onPress={() => regions.refetch()} testID="regions-retry">
+            <Text style={styles.hint}>Unable to load states. Tap to retry.</Text>
+          </Pressable>
+        ) : (
+          regions.data?.map((r) => <RegionCard key={r.slug} region={r} onPress={() => router.push(`/region/${r.slug}`)} />)
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
-function NearCard({ place, onPress }: { place: Place; onPress: () => void }) {
+function RegionCard({ region, onPress }: { region: Region; onPress: () => void }) {
   const styles = useStyles();
   return (
-    <Pressable style={styles.nearCard} onPress={onPress} testID={`near-card-${place.slug}`}>
-      <Image source={{ uri: place.hero_image }} style={styles.nearImg} contentFit="cover" />
-      <LinearGradient colors={["transparent", "rgba(26,33,48,0.95)"]} style={styles.nearScrim} />
-      <View style={styles.nearText}>
-        <Text style={styles.nearTitle} numberOfLines={1}>{place.name}</Text>
-        <Text style={styles.nearMeta}>
-          {place.city}
-          {place.distance_km != null ? ` · ${place.distance_km} km` : ""}
+    <Pressable style={styles.card} onPress={onPress} testID={`region-card-${region.slug}`}>
+      <Image source={{ uri: region.cover_image }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+      <LinearGradient colors={["transparent", "rgba(26,33,48,0.92)"]} style={styles.scrim} />
+      <View style={styles.cardText}>
+        <Text style={styles.cardMeta}>
+          {region.has_stories ? "STORIES AVAILABLE" : "COMING SOON"} · {region.area_count} {region.area_count === 1 ? "PLACE" : "PLACES"}
         </Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function BigCard({ place, onPress }: { place: Place; onPress: () => void }) {
-  const styles = useStyles();
-  return (
-    <Pressable style={styles.bigCard} onPress={onPress} testID={`big-card-${place.slug}`}>
-      <Image source={{ uri: place.hero_image }} style={styles.bigImg} contentFit="cover" />
-      <LinearGradient colors={["transparent", "rgba(26,33,48,0.9)"]} style={styles.bigScrim} />
-      <View style={styles.bigText}>
-        <Text style={styles.bigEra}>{place.era.toUpperCase()}</Text>
-        <Text style={styles.bigTitle} numberOfLines={2}>{place.name}</Text>
-        <Text style={styles.bigSub} numberOfLines={2}>{place.tagline}</Text>
-        <View style={styles.cityRow}>
-          <Feather name="map-pin" size={12} color="#F9F6F0" />
-          <Text style={styles.cityText}>{place.city}, {place.state}</Text>
-        </View>
+        <Text style={styles.cardTitle}>{region.name}</Text>
       </View>
     </Pressable>
   );
@@ -142,47 +124,38 @@ function BigCard({ place, onPress }: { place: Place; onPress: () => void }) {
 
 const useStyles = makeStyles((colors) => ({
   container: { flex: 1, backgroundColor: colors.surface },
-  header: { paddingHorizontal: spacing.xl, marginBottom: spacing.xl },
-  brand: { fontFamily: fonts.displayBold, fontSize: 44, color: colors.onSurface, letterSpacing: 0.5 },
+  header: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md, backgroundColor: colors.surface },
+  brand: { fontFamily: fonts.displayBold, fontSize: 44, color: colors.onSurface },
   sub: { fontFamily: fonts.body, fontSize: 14, color: colors.muted, marginTop: spacing.xs },
-  sectionTitle: {
-    fontFamily: fonts.display,
-    fontSize: 22,
-    color: colors.onSurface,
-    paddingHorizontal: spacing.xl,
-    marginTop: spacing.xl,
-    marginBottom: spacing.md,
-  },
-  hint: { fontFamily: fonts.body, fontSize: 13, color: colors.muted, paddingHorizontal: spacing.xl },
-  loadingRow: { height: 120, alignItems: "center", justifyContent: "center" },
-  hList: { paddingHorizontal: spacing.xl, gap: spacing.md },
-  nearCard: {
-    width: 220,
-    height: 280,
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    marginRight: spacing.md,
-    backgroundColor: colors.surfaceTertiary,
-  },
-  nearImg: { ...StyleSheet.absoluteFillObject },
-  nearScrim: { position: "absolute", left: 0, right: 0, bottom: 0, height: "60%" },
-  nearText: { position: "absolute", left: spacing.md, right: spacing.md, bottom: spacing.md },
-  nearTitle: { fontFamily: fonts.displayBold, fontSize: 20, color: "#F9F6F0" },
-  nearMeta: { fontFamily: fonts.body, fontSize: 12, color: "#F9F6F0", opacity: 0.85, marginTop: 2 },
-  bigCard: {
-    height: 360,
+  hereCard: {
     marginHorizontal: spacing.xl,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.xl,
     borderRadius: radius.lg,
-    overflow: "hidden",
-    backgroundColor: colors.surfaceTertiary,
+    backgroundColor: colors.surfaceInverse,
+    minHeight: 160,
+    justifyContent: "center",
   },
-  bigImg: { ...StyleSheet.absoluteFillObject },
-  bigScrim: { position: "absolute", left: 0, right: 0, bottom: 0, height: "70%" },
-  bigText: { position: "absolute", left: spacing.xl, right: spacing.xl, bottom: spacing.xl },
-  bigEra: { fontFamily: fonts.bodyBold, fontSize: 11, color: "#F9F6F0", opacity: 0.9, letterSpacing: 1.2 },
-  bigTitle: { fontFamily: fonts.displayBold, fontSize: 32, color: "#F9F6F0", marginTop: spacing.xs, lineHeight: 36 },
-  bigSub: { fontFamily: fonts.body, fontSize: 14, color: "#F9F6F0", opacity: 0.9, marginTop: spacing.xs },
-  cityRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.sm },
-  cityText: { fontFamily: fonts.body, fontSize: 12, color: "#F9F6F0" },
+  hereTag: { fontFamily: fonts.bodyBold, fontSize: 11, color: colors.brandTertiary, letterSpacing: 1.4 },
+  hereTitle: { fontFamily: fonts.displayBold, fontSize: 28, color: colors.onSurfaceInverse, marginTop: spacing.xs, lineHeight: 32 },
+  hereText: { fontFamily: fonts.body, fontSize: 14, lineHeight: 21, color: colors.onSurfaceInverse, opacity: 0.85, marginTop: spacing.sm },
+  hereBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: spacing.sm,
+    minHeight: 44,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandPrimary,
+  },
+  hereBtnText: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.onBrandPrimary },
+  sectionTitle: { fontFamily: fonts.displayBold, fontSize: 24, color: colors.onSurface, paddingHorizontal: spacing.xl, marginTop: spacing["2xl"], marginBottom: spacing.sm },
+  hint: { fontFamily: fonts.body, fontSize: 14, color: colors.muted, paddingHorizontal: spacing.xl },
+  card: { height: 170, marginHorizontal: spacing.xl, marginTop: spacing.md, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceTertiary },
+  scrim: { position: "absolute", left: 0, right: 0, bottom: 0, height: "75%" },
+  cardText: { position: "absolute", left: spacing.lg, right: spacing.lg, bottom: spacing.lg },
+  cardMeta: { fontFamily: fonts.bodyBold, fontSize: 10, color: "#F9F6F0", opacity: 0.85, letterSpacing: 1.2 },
+  cardTitle: { fontFamily: fonts.displayBold, fontSize: 30, color: "#F9F6F0", marginTop: 2 },
 }));
