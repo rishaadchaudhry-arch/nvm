@@ -7,8 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, SCOPE_LABEL, type Source } from "@/src/api";
+import { api, SCOPE_LABEL, type LocalAccount, type Source } from "@/src/api";
 import { ErrorView } from "@/src/components/error-view";
+import { LocalAccountCard } from "@/src/components/local-account-card";
 import { CommunityCard, DidYouKnowCard } from "@/src/components/tradition-cards";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -24,6 +25,7 @@ export default function PlaceHistory() {
   const verified = useQuery({ queryKey: ["stories", "place", key, "verified"], queryFn: () => api.storiesForPlace(key, "verified"), enabled: place.isSuccess });
   const pending = useQuery({ queryKey: ["stories", "place", key, "pending"], queryFn: () => api.storiesForPlace(key, "pending"), enabled: place.isSuccess });
   const cfg = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: Infinity });
+  const accounts = useQuery({ queryKey: ["local-accounts", key], queryFn: () => api.localAccounts(key), enabled: place.isSuccess });
 
   const [audio, setAudio] = useState<"idle" | "loading" | "playing" | "paused" | "error">("idle");
   const player = useRef<AudioPlayer | null>(null);
@@ -65,6 +67,9 @@ export default function PlaceHistory() {
   const h = history.data;
   const sourceById = new Map<number, Source>((h?.sources ?? []).map((src) => [src.id, src]));
   const threshold = cfg.data?.upvote_threshold ?? 5;
+  const accountsByEra = new Map<string, LocalAccount[]>();
+  for (const a of accounts.data ?? []) accountsByEra.set(a.era, [...(accountsByEra.get(a.era) ?? []), a]);
+  const hasAccounts = accountsByEra.size > 0;
 
   return (
     <View style={s.root}>
@@ -103,7 +108,7 @@ export default function PlaceHistory() {
             <Text style={s.body}>{(history.error as Error).message}</Text>
             <Text style={s.link}>Tap to try again</Text>
           </Pressable>
-        ) : h && !h.has_records ? (
+        ) : h && !h.has_records && !hasAccounts ? (
           <View style={s.emptyBox} testID="history-empty">
             <Text style={s.emptyTitle}>No recorded history for this exact spot yet.</Text>
             <Text style={s.body}>Open sources don&apos;t cover it yet. If you know what used to be here, be the first to add it.</Text>
@@ -119,34 +124,52 @@ export default function PlaceHistory() {
             ) : null}
 
             <Text style={s.section}>Through the centuries</Text>
-            <View style={s.timeline}>
-              {h.eras.map((e, i) => (
-                <View key={e.key} style={s.node} testID={`timeline-${e.key}`}>
-                  <View style={s.spineCol}>
-                    <View style={[s.dot, !e.text && s.dotEmpty]} />
-                    {i < h.eras.length - 1 ? <View style={s.spine} /> : null}
-                  </View>
-                  <View style={s.nodeBody}>
-                    <Text style={s.eraLabel}>{e.label.toUpperCase()}</Text>
-                    {e.text ? (
-                      <>
-                        <Text style={s.eraHeading}>{e.heading}</Text>
-                        <Text style={s.body}>{e.text}</Text>
-                        <View style={s.metaRow}>
-                          <Text style={s.scope}>{SCOPE_LABEL[e.scope]}</Text>
-                          {e.sources.map((id) => (
-                            <Text key={id} style={s.srcRef}>
-                              [{id}]
-                            </Text>
-                          ))}
-                        </View>
-                      </>
-                    ) : (
-                      <Text style={s.muted}>No records found for this period.</Text>
-                    )}
-                  </View>
+            {hasAccounts ? (
+              <View style={s.legend} testID="timeline-legend">
+                <View style={s.legendItem}>
+                  <View style={s.legendDot} />
+                  <Text style={s.legendText}>From written sources</Text>
                 </View>
-              ))}
+                <View style={s.legendItem}>
+                  <View style={s.legendBar} />
+                  <Text style={s.legendText}>Local account, told to the NVM team</Text>
+                </View>
+              </View>
+            ) : null}
+            <View style={s.timeline}>
+              {h.eras.map((e, i) => {
+                const local = accountsByEra.get(e.key) ?? [];
+                return (
+                  <View key={e.key} style={s.node} testID={`timeline-${e.key}`}>
+                    <View style={s.spineCol}>
+                      <View style={[s.dot, !e.text && !local.length && s.dotEmpty]} />
+                      {i < h.eras.length - 1 ? <View style={s.spine} /> : null}
+                    </View>
+                    <View style={s.nodeBody}>
+                      <Text style={s.eraLabel}>{e.label.toUpperCase()}</Text>
+                      {e.text ? (
+                        <>
+                          <Text style={s.eraHeading}>{e.heading}</Text>
+                          <Text style={s.body}>{e.text}</Text>
+                          <View style={s.metaRow}>
+                            <Text style={s.scope}>{SCOPE_LABEL[e.scope]}</Text>
+                            {e.sources.map((id) => (
+                              <Text key={id} style={s.srcRef}>
+                                [{id}]
+                              </Text>
+                            ))}
+                          </View>
+                        </>
+                      ) : (
+                        <Text style={s.muted}>{local.length ? "No written records for this period." : "No records found for this period."}</Text>
+                      )}
+                      {local.map((a) => (
+                        <LocalAccountCard key={a.id} a={a} />
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
 
             {h.did_you_know.length ? (
@@ -224,6 +247,11 @@ const useStyles = makeStyles((colors) => ({
   sectionHint: { fontFamily: fonts.body, fontSize: 13, color: colors.muted, marginTop: -spacing.sm, marginBottom: spacing.md },
   subSection: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.muted, marginTop: spacing.lg, marginBottom: spacing.sm },
   timeline: {},
+  legend: { gap: spacing.xs, marginTop: -spacing.xs, marginBottom: spacing.lg },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  legendDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.brandPrimary },
+  legendBar: { width: 10, height: 14, borderLeftWidth: 3, borderLeftColor: colors.brand, backgroundColor: colors.surfaceSecondary },
+  legendText: { fontFamily: fonts.body, fontSize: 12, color: colors.muted },
   node: { flexDirection: "row", gap: spacing.md },
   spineCol: { width: 14, alignItems: "center" },
   dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.brandPrimary, marginTop: 3 },

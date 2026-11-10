@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.emergent.pastscape.ydt2z5",
       "infoPlist": {
         "NSCameraUsageDescription": "Point at a street to see its history",
-        "NSLocationWhenInUseUsageDescription": "Know which street you are looking at"
+        "NSLocationWhenInUseUsageDescription": "Know which street you are looking at",
+        "NSPhotoLibraryUsageDescription": "Attach a photo to a local account"
       }
     },
     "android": {
@@ -24,7 +25,8 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_MEDIA_IMAGES"
       ]
     },
     "web": {
@@ -59,6 +61,12 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Know which street you are looking at"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach a photo to a local account"
         }
       ],
       "@react-native-vector-icons/feather"

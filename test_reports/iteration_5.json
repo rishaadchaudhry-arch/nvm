@@ -1,0 +1,41 @@
+{
+  "summary": "Local accounts feature tested end-to-end. Backend: 19/19 new tests pass (auth, create with/without photo, all 422/404/401 validations, public + admin lists, photo route, soft-delete + double-delete 404), plus 17/17 regression tests from test_nvm_api.py (look, search, places, cached history, traditions create/list/upvote/verify, admin). Frontend (390x844): admin sign-in -> Local accounts segment -> street search 'Lajpat Nagar' -> pick -> era 1800s -> fill -> submit works; la-saved note shows, form resets, card appears under 'Already collected'. Place page shows timeline-legend and the card inside timeline-1800s with LOCAL ACCOUNT / quote / 'As told by' / 'Collected ... by the NVM team'. Pre-seeded Lajpat Nagar II account photo loads (img complete, 64x48 natural). Remove works through the API and the card disappears from the admin list and the place timeline. Stories mode, Did you know?, the Add-a-story button, Sources and the home screen all render. One real UI bug: the Remove button collapses to 2px high on web. No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/local-accounts", "issue": "The image check trusts the client-sent Content-Type header only. A non-image file sent as image/jpeg is accepted and stored. Consider a magic-byte check (e.g. Pillow verify)."},
+      {"endpoint": "POST /api/admin/local-accounts", "issue": "The future-date check uses the UTC date. Between 00:00 and 05:30 IST an admin can't enter today's IST date (422). The frontend's today() also uses UTC (toISOString), so the prefilled date shows yesterday during that window."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AccountRow Remove button (app/admin.tsx:204)", "issue": "The inline style sets flex: 0, which react-native-web turns into 'flex: 0 1 0%'. In the column parent this collapses the Pressable to 2px high (measured bbox 89x2), so the red border draws as a strikethrough over 'Remove' and the touch target is about 2px. Fix: drop flex:0 and use a separate style without styles.action's flex:1 (e.g. {height:44, borderRadius: pill, alignItems/justifyContent center, alignSelf:'flex-start', paddingHorizontal: spacing.lg}) or use flexGrow:0/flexBasis:'auto'.", "testID": "delete-account-<id>", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "admin Local accounts", "issues": [
+        "Remove deletes on a single tap with no confirmation, and there is no undo in the UI.",
+        "Street picker: tapping the result 'Lajpat Nagar, Delhi' saved the account to 'Lajpat Nagar III' (look() reverse-geocodes the point to a nearby street). This is by design, but the admin may be surprised. The picked chip does show the resolved name."
+      ]},
+      {"screen": "place timeline", "issues": ["The pre-seeded Lajpat Nagar II photo is a 64x48 solid brown placeholder, not a real photo. It renders as a flat brown block. Replace it with a relevant image or remove the photo from the seed."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_local_accounts.py", "/app/backend/tests/test_nvm_api.py", "/app/test_reports/pytest/pytest_results_iter5.xml"],
+  "action_items": [
+    "Fix the collapsed Remove button in app/admin.tsx:204 (remove flex:0 / don't inherit flex:1 from styles.action).",
+    "Optional: confirm before Remove; magic-byte image validation on upload; IST-aware 'today' for collected_on (frontend default and backend future check).",
+    "Optional: replace the placeholder seed photo with a real, relevant image."
+  ],
+  "critical_code_review_comments": [
+    "In admin.tsx, session expiry is only detected from the queue query's 401. If the token expires while in Local accounts mode, the add/remove calls show a raw error instead of returning to sign-in.",
+    "The setTimeout for savedNote (admin.tsx:122) is never cleared. Harmless, but a second save within 4s gets its note cut short."
+  ],
+  "updated_files": ["/app/backend/tests/test_local_accounts.py (new)", "/app/backend/tests/cleanup_recent_test_traditions.py (new helper: lists/removes TEST_ traditions from the last N minutes, shows local_accounts state)"],
+  "success_rate": {"backend": "100% (36/36)", "frontend": "95% (all flows work; Remove button visually collapsed on web)"},
+  "seed_data_creation": "Created 3 TEST_ local accounts (2 via API, 1 via UI id 0bd1c8df-49aa-47e7-96e7-c089128b7a60). All are soft-deleted (deleted=true) and hidden from every list; one TEST_ photo object stays in storage. The UI pick created/opened place lajpat-nagar-iii-2bd57e74 and its history (kept). The 2 TEST_ traditions created by the test_nvm_api regression run were deleted by id. The pre-seeded Lajpat Nagar II account (b8d82949...) was untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && export $(grep EXPO_PUBLIC_BACKEND_URL /app/frontend/.env) && python -m pytest tests/test_local_accounts.py -n 0. test_nvm_api.py doesn't clean up its TEST_ traditions; afterwards run python tests/cleanup_recent_test_traditions.py 5 --delete. The system clock is 2026-11-10. Use a 390x844 viewport.",
+  "rca_of_issue": "Remove button: react-native-web expands flex:0 to 'flex: 0 1 0%' (flex-basis 0, shrink 1), so inside a column container the height:44 inherited from styles.action is overridden and the box shrinks to its 2px borders."
+}

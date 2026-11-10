@@ -1,4 +1,5 @@
 import { storage } from "@/src/utils/storage";
+import { uploadForm, type LocalFile } from "@/src/utils/upload";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -49,6 +50,21 @@ export type Tradition = {
   upvotes: number;
   created_at: string;
   has_voted?: boolean;
+};
+
+export type LocalAccount = {
+  id: string;
+  place_key: string;
+  place_title: string;
+  era: string;
+  era_label: string;
+  body: string;
+  told_by: string;
+  village: string;
+  collected_on: string;
+  photo_url: string | null;
+  added_by: string;
+  created_at: string;
 };
 
 export const ERAS = [
@@ -162,6 +178,26 @@ export const api = {
   adminQueue: async () => request<Tradition[]>("/api/admin/traditions?status=pending", {}, await adminToken.get()),
   moderate: async (id: string, action: "verify" | "reject") =>
     request<Tradition>(`/api/admin/traditions/${id}/moderate`, json({ action }), await adminToken.get()),
+
+  localAccounts: (key: string) => request<LocalAccount[]>(`/api/local-accounts?place_key=${encodeURIComponent(key)}`),
+  adminLocalAccounts: async () => request<LocalAccount[]>("/api/admin/local-accounts", {}, await adminToken.get()),
+  addLocalAccount: async (fields: { place_key: string; era: string; body: string; told_by: string; village: string; collected_on: string }, photo?: LocalFile | null) => {
+    const res = await uploadForm(`${BASE}/api/admin/local-accounts`, {
+      headers: { Authorization: `Bearer ${await adminToken.get()}` },
+      fields,
+      files: photo ? { photo } : {},
+    });
+    if (!res.ok) {
+      let detail = `Request failed (${res.status})`;
+      try {
+        const j = await res.json();
+        if (typeof j.detail === "string") detail = j.detail;
+      } catch {}
+      throw new ApiError(res.status, detail);
+    }
+    return (await res.json()) as LocalAccount;
+  },
+  deleteLocalAccount: async (id: string) => request<{ deleted: number }>(`/api/admin/local-accounts/${id}`, { method: "DELETE" }, await adminToken.get()),
 };
 
 export function distanceM(lat1: number, lng1: number, lat2: number, lng2: number) {

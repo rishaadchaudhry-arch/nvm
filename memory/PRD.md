@@ -19,6 +19,11 @@
 - 2026-11-09 v1 Yatra (basic places) → v2 (Chandni Chowk hand-written camera labels) → v3 NVM rebuild (any street, open-data engine)
 - v3 testing iteration_4: all flows pass. Fixed the unreadable "Did you know?" card, scope over-claims, repeated filler, uncited summary/then-now, OSM as citation, and failed builds counting against the limit
 
+## Local accounts
+- Admin → "Local accounts" tab: add an entry for any street (search → pick), era, story text, who told it, their village/town, date collected, optional photo (Emergent Object Storage via backend). Shown inside the matching era node of the street timeline as a "LOCAL ACCOUNT" card (brown left bar, tinted panel, legend) — separate from sourced Wikipedia text. Timeline also renders when a street has only local accounts and no written records. Soft delete from admin.
+- Endpoints: POST/GET/DELETE /api/admin/local-accounts, GET /api/local-accounts?place_key=, GET /api/local-accounts/{id}/photo
+- Tested iteration_5: backend 36/36, admin + timeline flows pass
+
 ## Backlog
 - P0 before launch: replace public Nominatim with a paid geocoder (public usage policy disallows heavy app traffic); re-check TRUSTED_PROXY_HOPS in production
 - P1: Hindi/regional-language Wikipedia sources (much richer for small towns), archival photos per era, offline cache for an area, admin "rebuild/edit history" UI

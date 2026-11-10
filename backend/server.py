@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Annotated, List, Literal, Optional
 
 import emoji
+import httpx
 import jwt
 from dotenv import load_dotenv
 from emergentintegrations.llm.openai import OpenAITextToSpeech
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
 from pwdlib import PasswordHash
@@ -23,6 +24,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
+import object_storage as store
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -42,6 +44,8 @@ FACING_DISTANCE_M = 35  # how far ahead of the phone we look when the camera poi
 STORY_RADIUS_M = 150  # a verified story shows as "Did you know?" within this distance
 DEVICES_PER_IP_PER_HOUR = 20
 VOTES_PER_IP_PER_TRADITION = 3
+PHOTO_MAX_BYTES = 8 * 1024 * 1024
+ERA_LABELS = dict(he.ERAS)
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -65,6 +69,10 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created"),
     ],
     "admins": [IndexModel([("email", ASCENDING)], name="email", unique=True)],
+    "local_accounts": [
+        IndexModel([("id", ASCENDING)], name="id", unique=True),
+        IndexModel([("place_key", ASCENDING), ("deleted", ASCENDING), ("created_at", DESCENDING)], name="place_deleted_created"),
+    ],
     "device_issues": [
         IndexModel([("created_at", ASCENDING)], name="ttl", expireAfterSeconds=3600),
         IndexModel([("ip", ASCENDING)], name="ip"),
@@ -173,7 +181,25 @@ class ModerateIn(BaseModel):
     action: Literal["verify", "reject"]
 
 
+class LocalAccount(BaseModel):
+    """A first-hand account collected by the NVM team, shown in the timeline apart from sourced history."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    place_key: str
+    place_title: str
+    era: str
+    era_label: str
+    body: str
+    told_by: str
+    village: str
+    collected_on: str  # YYYY-MM-DD
+    photo_url: Optional[str] = None
+    added_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 TRADITION_PROJECTION = {"_id": 0, "voters": 0, "voter_ips": 0, "location": 0}
+LOCAL_ACCOUNT_PROJECTION = {"_id": 0, "photo_path": 0, "deleted": 0}
 
 # ------------------------------ AUTH / HELPERS ------------------------------
 
@@ -504,6 +530,106 @@ async def rebuild_history(key: str, admin=Depends(require_admin)):
     return {"deleted": res.deleted_count}
 
 
+# ---- Local accounts (admin-collected, shown inside the timeline) ----
+
+
+def _clean_field(value: str, name: str, lo: int, hi: int) -> str:
+    v = value.strip()
+    if not lo <= len(v) <= hi:
+        raise HTTPException(status_code=422, detail=f"{name} must be {lo}–{hi} characters")
+    return v
+
+
+@api.get("/local-accounts", response_model=List[LocalAccount])
+async def local_accounts(place_key: str = Query(..., min_length=3, max_length=80)):
+    docs = await db.local_accounts.find({"place_key": place_key, "deleted": False}, LOCAL_ACCOUNT_PROJECTION).sort("created_at", -1).to_list(200)
+    return [LocalAccount(**d) for d in docs]
+
+
+@api.get("/local-accounts/{aid}/photo")
+async def local_account_photo(aid: str):
+    doc = await db.local_accounts.find_one({"id": aid, "deleted": False}, {"_id": 0, "photo_path": 1})
+    if not doc or not doc.get("photo_path"):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    try:
+        data, content_type = await store.get_object(EMERGENT_LLM_KEY, doc["photo_path"])
+    except Exception as exc:
+        logger.error("photo fetch failed for %s: %s", aid, exc)
+        raise HTTPException(status_code=502, detail="Photo unavailable right now") from exc
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=31536000"})
+
+
+@api.get("/admin/local-accounts", response_model=List[LocalAccount])
+async def admin_local_accounts(admin=Depends(require_admin)):
+    docs = await db.local_accounts.find({"deleted": False}, LOCAL_ACCOUNT_PROJECTION).sort("created_at", -1).to_list(200)
+    return [LocalAccount(**d) for d in docs]
+
+
+@api.post("/admin/local-accounts", response_model=LocalAccount)
+async def create_local_account(
+    place_key: str = Form(..., min_length=3, max_length=80),
+    era: str = Form(...),
+    body: str = Form(...),
+    told_by: str = Form(...),
+    village: str = Form(...),
+    collected_on: str = Form(...),
+    photo: Optional[UploadFile] = File(None),
+    admin=Depends(require_admin),
+):
+    if era not in ERA_LABELS:
+        raise HTTPException(status_code=422, detail="Unknown era")
+    try:
+        collected = datetime.strptime(collected_on.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Date collected must be YYYY-MM-DD")
+    # Admins collect in India; allow a day of slack so a local date is never rejected as "future".
+    if collected > (datetime.now(timezone.utc) + timedelta(days=1)).date():
+        raise HTTPException(status_code=422, detail="Date collected can't be in the future")
+    place = await get_place(place_key)
+    account = LocalAccount(
+        place_key=place.key,
+        place_title=place.title,
+        era=era,
+        era_label=ERA_LABELS[era],
+        body=_clean_field(body, "Story", 10, 2000),
+        told_by=_clean_field(told_by, "Who told it", 1, 80),
+        village=_clean_field(village, "Village or town", 1, 80),
+        collected_on=collected.isoformat(),
+        added_by=admin["email"],
+    )
+    photo_path = None
+    if photo is not None and photo.filename:
+        content_type = (photo.content_type or "").lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=422, detail="Photo must be an image")
+        data = await photo.read(PHOTO_MAX_BYTES + 1)
+        if len(data) > PHOTO_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Photo must be under 8 MB")
+        ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/gif": "gif"}.get(content_type, "jpg")
+        try:
+            result = await store.put_object(EMERGENT_LLM_KEY, store.object_path("local-accounts", f"{account.id}.{ext}"), data, content_type)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 402:
+                raise HTTPException(status_code=402, detail="Photo storage is out of credits. Save without a photo or top up.") from exc
+            logger.error("photo upload failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
+        except Exception as exc:
+            logger.error("photo upload failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
+        photo_path = result["path"]
+        account.photo_url = f"/api/local-accounts/{account.id}/photo"
+    await db.local_accounts.insert_one({**account.model_dump(), "photo_path": photo_path, "deleted": False})
+    return account
+
+
+@api.delete("/admin/local-accounts/{aid}")
+async def delete_local_account(aid: str, admin=Depends(require_admin)):
+    res = await db.local_accounts.update_one({"id": aid, "deleted": False}, {"$set": {"deleted": True}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Local account not found")
+    return {"deleted": 1}
+
+
 # ---- Narration ----
 
 
@@ -549,6 +675,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 async def startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
     await seed_admin()
+    try:
+        await store.init_storage(EMERGENT_LLM_KEY)
+    except Exception as exc:
+        logger.error("object storage init failed (will retry on first upload): %s", exc)
 
 
 @app.on_event("shutdown")

@@ -101,3 +101,8 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## Local accounts (2026-11-10)
+- Backend: POST /api/admin/local-accounts (multipart, admin JWT; fields place_key, era, body, told_by, village, collected_on YYYY-MM-DD, optional photo image <8MB stored in Emergent Object Storage), GET /api/local-accounts?place_key=, GET /api/local-accounts/{id}/photo (public), GET /api/admin/local-accounts, DELETE /api/admin/local-accounts/{id} (soft delete)
+- Frontend: admin.tsx segmented "Stories | Local accounts" (form in src/components/local-account-form.tsx with street search → api.look → place key, era chips, text, told by, village, date, photo picker); place/[key].tsx shows LocalAccountCard inside the matching era node with legend; timeline now renders when a place has no written records but has local accounts
+- Admin: admin@yatra.app / Yatra-a20d244dfc16. Seeded sample account exists on place lajpat-nagar-ii-1a9b6fe7 (era 1900_1947, with photo)
+- agent_communication: main agent verified backend create+photo round trip via curl and a web screenshot of the timeline; needs testing agent for admin UI flow + regressions (stories queue unchanged)
