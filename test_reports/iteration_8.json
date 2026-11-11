@@ -1,0 +1,41 @@
+{
+  "summary": "Tested the Share card feature (backend and web frontend). Backend: 9 of 10 pytest checks pass. card-facts returns 12 facts for Nai Sarak in the expected order (3 'Did you know?', then 8 era labels, then 'In short') and returns 404 for an unknown key. card.png returns a valid 1080x1350 PNG that is not blank, with Content-Disposition 'inline; filename=\"nvm-nai-sarak.png\"' and Cache-Control 'public, max-age=86400'. fact=1 returns different bytes from fact=0, fact=N wraps back to fact 0, fact=-1 gives 422, an unknown key gives 404, and a repeat call comes from the cache with identical bytes. I opened the PNGs and checked them by eye: they look good. ONE FAILURE: fact=999 returns 422 instead of wrapping to 200, because the endpoint declares Query(le=50). Frontend at 390x844: everything in the spec passes. share-btn sits next to Listen and both are 44px high. The sheet opens, the image loads (fact=0, naturalWidth 1080), the counter reads 'Fact 1 of 12', share-next-fact changes it to 'Fact 2 of 12' and the image to fact=1, share-send opens a popup with card.png?fact=1, share-note appears, and share-close closes the sheet. Listen, the timeline, local accounts and sources still render, and there were no page errors. I skipped the 'no share-btn without records' check: all 11 history docs have has_records=true, and opening a place with no history doc would start a Wikipedia build that writes data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/history/{key}/card.png?fact=999", "issue": "Returns 422 'Input should be less than or equal to 50' instead of wrapping (the spec says it should wrap to 200). Cause: server.py:947 has fact: int = Query(0, ge=0, le=50). Either remove le=50 (fact % len(facts) already wraps) or update the spec."},
+      {"endpoint": "GET /api/history/{key}/card.png", "issue": "facts[fact % len(facts)] raises ZeroDivisionError (500) if a doc has has_records=true but no did_you_know, eras or summary text. Unlikely, but card-facts would return [] and card.png would return 500. Return 404 when facts is empty. server.py:951-952"},
+      {"endpoint": "GET /api/history/{key}/card.png", "issue": "Cache write is not atomic: path.write_bytes(png) followed by a path.exists() check, so a concurrent request could serve a half-written PNG. Write to a temp file and rename it into place. server.py:958-960"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ShareCardModal (src/components/share-card.tsx)", "issues": [
+        "The card is sized by width only (cardW = min(width-48, 360), height x1.25) and the sheet has no ScrollView. At 375x667 the sheet is already 645px of the 667px viewport. Once share-note or an error line appears it grows by about 35px and the top, including the close button, can go off screen. On shorter devices (568px) it overflows straight away. Also cap the card size by window height, or wrap the content in a ScrollView.",
+        "On web the hint still says 'Opens your phone's share sheet…' while the button actually opens a new tab. Consider wording specific to the web.",
+        "On web, the success note 'Opened in a new tab' appears even if a popup blocker stopped Linking.openURL."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_share_card.py", "/app/test_reports/pytest/pytest_share_card.xml"],
+  "action_items": [
+    "server.py:947: remove le=50 from the fact Query (keep ge=0) so out-of-range indices wrap as specified, or confirm that 422 is intended and update the spec.",
+    "server.py:951: if card_facts(doc) is empty, return 404 to avoid a ZeroDivisionError.",
+    "share-card.tsx: make the sheet fit short screens (size the card by height as well, or add a ScrollView).",
+    "Optional: write cached PNGs atomically (temp file, then rename)."
+  ],
+  "critical_code_review_comments": [
+    "The card endpoint accepts fact up to 50, but the frontend only cycles within count, so the UI is not affected by the le=50 cap.",
+    "No deprecated Expo packages in the new code: it uses expo-image, expo-file-system (new File API) and expo-sharing."
+  ],
+  "updated_files": ["/app/backend/tests/test_share_card.py"],
+  "success_rate": {"backend": "90% (9/10)", "frontend": "100% of the tested web flows"},
+  "seed_data_creation": "None. Only read-only GETs; the render cache gained PNG files in backend/card_cache.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with EXPO_PUBLIC_BACKEND_URL exported and -n 0. All 11 histories have has_records=true. Places without a history doc (e.g. phulera-tehsil-ad307ddc) would start a Wikipedia build if opened, so avoid them. test_fact_999_wraps fails until le=50 is removed.",
+  "rca_of_issue": "fact=999 returns 422 because FastAPI's Query validator (le=50) rejects it before the modulo wrap in the handler runs."
+}

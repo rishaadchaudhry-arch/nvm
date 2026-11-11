@@ -26,6 +26,8 @@
 - Bulk CSV import (street name or key, era label/key, flexible dates; per-row failure report) + CSV backup export of all stories and local accounts (iteration_6)
 - Admin "History" tab: edit any street's summary/then-now/eras with per-era scope + citation toggles, add manual sources, rebuild from fresh sources; server rejects text without a citable source. "Add/Replace photo" on existing accounts. Hindi Wikipedia (geosearch, interlanguage links, direct search) added as a source; shown as "Wikipedia (Hindi)" (iteration_7)
 
+- Share card: share-btn on the place screen opens a preview of a 1080×1350 PNG (street name, one fact, NVM mark; Pillow-rendered server-side with the app fonts/palette), "Another fact" cycles did-you-knows → eras → summary, Share uses the native share sheet (web: new tab). (iteration_8)
+
 ## Backlog
 - P0 before launch: replace public Nominatim with a paid geocoder (public usage policy disallows heavy app traffic); re-check TRUSTED_PROXY_HOPS in production
 - P1: Hindi/regional-language Wikipedia sources (much richer for small towns), archival photos per era, offline cache for an area, admin "rebuild/edit history" UI

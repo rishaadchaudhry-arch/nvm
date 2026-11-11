@@ -119,3 +119,7 @@
 - POST /api/admin/local-accounts/{id}/photo (multipart 'photo') attaches/replaces a photo on an existing account.
 - Frontend: admin third tab "History" (src/components/history-editor.tsx): street picker → summary/then-now, source list, add new source, per-era heading/text/scope chips/source toggles, Save (disabled while an era has text but no source), Rebuild with tap-again confirm. AccountRow has "Add photo / Replace photo". Sources on place page show "Wikipedia (Hindi)" / "Added by the NVM team".
 - Note: Nai Sarak (nai-sarak-1017b307) pre1500 era currently contains a test hand-edit with manual source [16]; testing may rebuild it.
+
+## Share card (2026-11-11)
+- GET /api/history/{key}/card-facts → [{label,text}] (404 if no records); GET /api/history/{key}/card.png?fact=N → 1080x1350 PNG rendered with Pillow (backend/share_card.py, fonts in backend/fonts, cached in backend/card_cache), fact index wraps modulo count; 404 if no records.
+- Frontend: share-btn in place/[key] header (only when has_records) opens ShareCardModal (src/components/share-card.tsx): preview image, "Fact i of n", Another fact (cycles), Share (web: opens PNG in new tab; native: downloads to cache + expo-sharing sheet).

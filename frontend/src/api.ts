@@ -177,6 +177,8 @@ export const api = {
 
   narrate: (key: string) => request<{ audio_url: string }>(`/api/history/${encodeURIComponent(key)}/narrate`, { method: "POST" }),
   audioUrl: (path: string) => `${BASE}${path}`,
+  cardFacts: (key: string) => request<{ label: string; text: string }[]>(`/api/history/${encodeURIComponent(key)}/card-facts`),
+  cardUrl: (key: string, fact: number) => `${BASE}/api/history/${encodeURIComponent(key)}/card.png?fact=${fact}`,
 
   login: async (email: string, password: string) => {
     const body = `username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;

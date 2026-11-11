@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, SCOPE_LABEL, sourceLabel, type LocalAccount, type Source } from "@/src/api";
 import { ErrorView } from "@/src/components/error-view";
 import { LocalAccountCard } from "@/src/components/local-account-card";
+import { ShareCardModal } from "@/src/components/share-card";
 import { CommunityCard, DidYouKnowCard } from "@/src/components/tradition-cards";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -28,6 +29,7 @@ export default function PlaceHistory() {
   const accounts = useQuery({ queryKey: ["local-accounts", key], queryFn: () => api.localAccounts(key), enabled: place.isSuccess });
 
   const [audio, setAudio] = useState<"idle" | "loading" | "playing" | "paused" | "error">("idle");
+  const [sharing, setSharing] = useState(false);
   const player = useRef<AudioPlayer | null>(null);
   useEffect(() => () => player.current?.remove(), []);
 
@@ -78,18 +80,24 @@ export default function PlaceHistory() {
           <Feather name="arrow-left" size={20} color={colors.onSurface} />
         </Pressable>
         {h?.has_records ? (
-          <Pressable onPress={toggleAudio} style={s.listen} testID="narrate-btn" disabled={audio === "loading"}>
-            {audio === "loading" ? (
-              <ActivityIndicator size="small" color={colors.onBrandPrimary} />
-            ) : (
-              <Feather name={audio === "playing" ? "pause" : "play"} size={16} color={colors.onBrandPrimary} />
-            )}
-            <Text style={s.listenText} testID="narrate-status">
-              {audio === "playing" ? "Playing" : audio === "paused" ? "Paused" : audio === "error" ? "Retry audio" : audio === "loading" ? "Preparing" : "Listen"}
-            </Text>
-          </Pressable>
+          <View style={s.headerActions}>
+            <Pressable onPress={() => setSharing(true)} style={s.iconBtn} testID="share-btn" accessibilityLabel="Share this street">
+              <Feather name="share-2" size={18} color={colors.onSurface} />
+            </Pressable>
+            <Pressable onPress={toggleAudio} style={s.listen} testID="narrate-btn" disabled={audio === "loading"}>
+              {audio === "loading" ? (
+                <ActivityIndicator size="small" color={colors.onBrandPrimary} />
+              ) : (
+                <Feather name={audio === "playing" ? "pause" : "play"} size={16} color={colors.onBrandPrimary} />
+              )}
+              <Text style={s.listenText} testID="narrate-status">
+                {audio === "playing" ? "Playing" : audio === "paused" ? "Paused" : audio === "error" ? "Retry audio" : audio === "loading" ? "Preparing" : "Listen"}
+              </Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
+      {h?.has_records && place.data ? <ShareCardModal placeKey={key} placeTitle={place.data.title} visible={sharing} onClose={() => setSharing(false)} /> : null}
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.xl, paddingBottom: insets.bottom + spacing["2xl"] }}>
         <Text style={s.kicker}>WHAT WAS HERE</Text>
@@ -236,6 +244,7 @@ const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, backgroundColor: colors.surface },
   iconBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   listen: { flexDirection: "row", alignItems: "center", gap: spacing.xs, minHeight: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.brandPrimary },
   listenText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.onBrandPrimary },
   kicker: { fontFamily: fonts.bodyBold, fontSize: 11, letterSpacing: 1.6, color: colors.brand, marginTop: spacing.md },

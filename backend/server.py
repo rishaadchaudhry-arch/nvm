@@ -27,6 +27,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
 import object_storage as store
+import share_card
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -71,6 +72,8 @@ logger = logging.getLogger(__name__)
 
 TTS_CACHE_DIR = ROOT_DIR / "tts_cache"
 TTS_CACHE_DIR.mkdir(exist_ok=True)
+CARD_CACHE_DIR = ROOT_DIR / "card_cache"
+CARD_CACHE_DIR.mkdir(exist_ok=True)
 
 password_hash = PasswordHash.recommended()
 DUMMY_HASH = password_hash.hash("dummy-password-to-even-out-timing")
@@ -918,6 +921,47 @@ async def get_tts(key: str):
     if not re.fullmatch(r"[0-9a-f]{64}", key) or not path.exists():
         raise HTTPException(status_code=404, detail="Audio not found")
     return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "public, max-age=31536000"})
+
+
+# ---- Share card ----
+
+
+def card_facts(doc: dict) -> list[dict]:
+    """The facts worth putting on a card, most surprising first: did-you-knows, then dated eras, then the summary."""
+    facts = [{"label": "Did you know?", "text": d["text"]} for d in doc.get("did_you_know", []) if d.get("text")]
+    facts += [{"label": e["label"], "text": e["text"]} for e in doc.get("eras", []) if e.get("text")]
+    if doc.get("summary"):
+        facts.append({"label": "In short", "text": doc["summary"]})
+    return facts
+
+
+@api.get("/history/{key}/card-facts")
+async def history_card_facts(key: str):
+    doc = await db.histories.find_one({"key": key}, {"_id": 0})
+    if not doc or not doc.get("has_records"):
+        raise HTTPException(status_code=404, detail="No story to share yet")
+    return card_facts(doc)
+
+
+@api.get("/history/{key}/card.png")
+async def history_card(key: str, fact: int = Query(0, ge=0)):
+    doc = await db.histories.find_one({"key": key}, {"_id": 0})
+    facts = card_facts(doc) if doc and doc.get("has_records") else []
+    if not facts:
+        raise HTTPException(status_code=404, detail="No story to share yet")
+    chosen = facts[fact % len(facts)]
+    place = await get_place(key)
+    langs = {s.get("lang") for s in doc.get("sources", []) if s["type"] == "wikipedia"}
+    source_note = "From Wikipedia" + (" (English and Hindi)" if "hi" in langs and "en" in langs else " (Hindi)" if "hi" in langs else "") + (" and the NVM team" if any(s["type"] == "manual" for s in doc.get("sources", [])) else "")
+    digest = hashlib.sha256(f"v2|{place.title}|{place.subtitle}|{chosen['label']}|{chosen['text']}|{source_note}".encode()).hexdigest()
+    path = CARD_CACHE_DIR / f"{digest}.png"
+    if not path.exists():
+        png = await asyncio.to_thread(share_card.render_card, place.title, place.subtitle, chosen["label"], chosen["text"], source_note)
+        tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        tmp.write_bytes(png)
+        tmp.replace(path)  # atomic, so a parallel request never reads a half-written file
+    safe_name = re.sub(r"[^a-z0-9]+", "-", place.title.lower()).strip("-") or "street"
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400", "Content-Disposition": f'inline; filename="nvm-{safe_name}.png"'})
 
 
 app.include_router(api)
