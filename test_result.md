@@ -106,3 +106,16 @@
 - Frontend: admin.tsx segmented "Stories | Local accounts" (form in src/components/local-account-form.tsx with street search → api.look → place key, era chips, text, told by, village, date, photo picker); place/[key].tsx shows LocalAccountCard inside the matching era node with legend; timeline now renders when a place has no written records but has local accounts
 - Admin: admin@yatra.app / Yatra-a20d244dfc16. Seeded sample account exists on place lajpat-nagar-ii-1a9b6fe7 (era 1900_1947, with photo)
 - agent_communication: main agent verified backend create+photo round trip via curl and a web screenshot of the timeline; needs testing agent for admin UI flow + regressions (stories queue unchanged)
+
+## Bulk import / export (2026-11-11)
+- POST /api/admin/local-accounts/import (admin, multipart 'file' CSV; columns street|place_key, era (key or label e.g. "1900–1947"), story|body, told_by, village, collected_on (YYYY-MM-DD or DD/MM/YYYY); street names geocoded via Nominatim; returns {created, rows, failed[{row,street,reason}], created_rows}; good rows saved, bad rows reported; max 200 rows / 2 MB)
+- GET /api/admin/local-accounts/template.csv (public template), GET /api/admin/export.csv (admin via Bearer header OR ?token=; CSV of all local accounts + community stories with 'type' column)
+- Frontend: src/components/bulk-tools.tsx inside admin Local accounts tab: Import CSV (document picker), Template, Download backup (web opens URL with token; native writes file + share sheet)
+- Main agent verified backend via curl (partial-failure import, export, 401 without token) and a web screenshot of the panel.
+
+## History editor + Hindi Wikipedia + photo on existing account (2026-11-11)
+- history_engine.gather_sources now also pulls Hindi Wikipedia (geosearch, interlanguage links of English hits, direct hi search for narrow levels); sources carry lang ("en"/"hi"); prompt tells the LLM to translate Hindi facts and cite them. Citation rule unchanged (uncited text dropped).
+- PUT /api/admin/history/{key} (HistoryEdit: summary, then_now, eras[{key,heading,text,scope,sources}], new_sources[{title,url,scope}]) — 422 if any era has text without a citable source, or scope invalid; manual sources appended with type "manual"; sets edited_at/edited_by. POST /api/admin/history/{key}/rebuild — deletes and rebuilds from fresh sources, returns History.
+- POST /api/admin/local-accounts/{id}/photo (multipart 'photo') attaches/replaces a photo on an existing account.
+- Frontend: admin third tab "History" (src/components/history-editor.tsx): street picker → summary/then-now, source list, add new source, per-era heading/text/scope chips/source toggles, Save (disabled while an era has text but no source), Rebuild with tap-again confirm. AccountRow has "Add photo / Replace photo". Sources on place page show "Wikipedia (Hindi)" / "Added by the NVM team".
+- Note: Nai Sarak (nai-sarak-1017b307) pre1500 era currently contains a test hand-edit with manual source [16]; testing may rebuild it.

@@ -1,0 +1,39 @@
+{
+  "summary": "Tested the bulk CSV import and CSV export/backup for local accounts, backend and frontend. Backend: 33 of 33 pytest tests passed (14 new bulk tests plus 19 local-accounts/regression tests). Covered: template.csv; mixed-row import (2 by place key incl. en-dash era label and DD/MM/YYYY date, 1 by street name geocoded via Nominatim to 'Inner Circle', 4 failing rows with reasons, blank row ignored); 401 without token; 422 for missing column, header-only file and empty file; header aliases; BOM/CRLF; export 401 with no or bad token, 200 with Bearer and with ?token=, attachment filename nvm-backup-YYYY-MM-DD.csv, exact 18 columns, pending/verified/rejected community stories included, soft-deleted accounts excluded. Frontend at 390x844: sign in, Local accounts tab, bulk-tools panel. Import CSV opened the native file chooser; with 2 good rows and 1 bad row, the result box showed '2 of 3 rows added' plus 'Row 4 ... Unknown era'. Both new accounts appeared under 'Already collected' without a reload. Download backup opened a new tab with GET export.csv?token=... returning 200 and an attachment header, and showed bulk-export-note 'Your backup is downloading.'. Template opened template.csv with 200. The 2 UI-created accounts were then removed with their Remove buttons. The pre-existing Shanti Devi, Ram Lal and Iqbal accounts are untouched. No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/local-accounts/import", "issue": "The 'rows' count includes all-empty rows like ',,,,,'. They are skipped, not counted as failed, but they still count toward rows, so the UI says '3 of 8 rows added' when there are only 7 real rows. Fully empty lines are already dropped by csv.DictReader. Fix: count only non-blank rows."},
+      {"endpoint": "GET /api/admin/export.csv", "issue": "CSV formula injection. Community-story title/body/author come from anonymous users and are written to the CSV as-is. A value starting with =, +, - or @ runs as a formula when the backup is opened in Excel or Sheets. Fix: prefix such cells with a single quote (')."},
+      {"endpoint": "POST /api/admin/local-accounts/import", "issue": "Street names are geocoded one after another, and Nominatim is throttled to 1 req/s. A 200-row file with many different street names could take more than 60 s and hit the ingress/proxy timeout."},
+      {"endpoint": "POST /api/admin/local-accounts/import", "issue": "Duplicates are not detected: importing the same file twice creates every account twice."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "admin > Local accounts", "issues": ["The Remove button (delete-account-<id>) deletes at once with no confirmation. This was there before this round, but there is now more data at risk."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_bulk_import_export.py", "/app/backend/tests/test_local_accounts.py", "/app/test_reports/pytest/pytest_bulk.xml"],
+  "action_items": [
+    "(minor) Import response: leave all-empty rows out of 'rows'.",
+    "(minor) Export: protect against CSV formula injection by prefixing cells that start with = + - @ with '.",
+    "(optional) Import: cap the number of unique street names geocoded per file, or run large imports as a background job, so long files don't hit the proxy timeout.",
+    "(optional) Ask for confirmation before Remove on local accounts."
+  ],
+  "critical_code_review_comments": [
+    "Export auth via ?token= puts the 12-hour admin JWT in the URL, where it can leak into browser history and proxy logs. Consider a short-lived download token used only for export.",
+    "Export builds the whole CSV in memory with StringIO. Fine at current size; use StreamingResponse if the data grows.",
+    "Import rows that raise an unexpected error all get the reason 'Couldn't look up this street right now', even when the error is not a lookup problem (e.g. a DB error). The message can mislead."
+  ],
+  "updated_files": ["/app/backend/tests/test_bulk_import_export.py"],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% (import, result box, list refresh, export, template, remove)"},
+  "seed_data_creation": "None left behind. Test-created local accounts were soft-deleted by id. The 3 TEST_ traditions created for the export-status test were deleted by id. DB now holds only the 3 pre-existing local accounts and 0 traditions.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the backend tests with '-n 0' (pytest.ini enables xdist with loadscope, which breaks the module-scoped created_ids fixture across classes). Backend URL comes from env var EXPO_PUBLIC_BACKEND_URL. The server clock reads 2026-11-11. On web, Linking.openURL opens a popup whose url reads empty because the response is an attachment; check it with a context 'response' listener instead.",
+  "rca_of_issue": ""
+}

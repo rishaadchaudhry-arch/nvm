@@ -69,7 +69,8 @@
           "photosPermission": "Attach a photo to a local account"
         }
       ],
-      "@react-native-vector-icons/feather"
+      "@react-native-vector-icons/feather",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

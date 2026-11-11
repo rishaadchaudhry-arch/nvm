@@ -7,11 +7,16 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { adminToken, api, ApiError, type LocalAccount, type Tradition } from "@/src/api";
+import { BulkTools } from "@/src/components/bulk-tools";
+import { HistoryEditor } from "@/src/components/history-editor";
 import { LocalAccountCard } from "@/src/components/local-account-card";
 import { LocalAccountForm } from "@/src/components/local-account-form";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { pickPhoto } from "@/src/utils/pick-photo";
 
-type Mode = "stories" | "accounts";
+type Mode = "stories" | "accounts" | "history";
+const MODE_LABEL: Record<Mode, string> = { stories: "Stories", accounts: "Local accounts", history: "History" };
+const MODE_TITLE: Record<Mode, string> = { stories: "Review stories", accounts: "Local accounts", history: "Edit a street's history" };
 
 export default function Admin() {
   const styles = useStyles();
@@ -88,13 +93,13 @@ export default function Admin() {
       </View>
       <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing["2xl"] }} bottomOffset={spacing.xl} keyboardShouldPersistTaps="handled">
         <Text style={styles.tag}>NVM TEAM</Text>
-        <Text style={styles.title}>{signedIn && mode === "accounts" ? "Local accounts" : "Review stories"}</Text>
+        <Text style={styles.title}>{signedIn ? MODE_TITLE[mode] : "Review stories"}</Text>
 
         {signedIn ? (
           <View style={styles.segment} testID="admin-mode">
-            {(["stories", "accounts"] as Mode[]).map((m) => (
+            {(Object.keys(MODE_LABEL) as Mode[]).map((m) => (
               <Pressable key={m} onPress={() => setMode(m)} style={[styles.segmentBtn, mode === m && styles.segmentActive]} testID={`admin-mode-${m}`}>
-                <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>{m === "stories" ? "Stories" : "Local accounts"}</Text>
+                <Text style={[styles.segmentText, mode === m && styles.segmentTextActive]}>{MODE_LABEL[m]}</Text>
               </Pressable>
             ))}
           </View>
@@ -113,6 +118,11 @@ export default function Admin() {
               {loggingIn ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryText}>Sign in</Text>}
             </Pressable>
           </View>
+        ) : mode === "history" ? (
+          <>
+            <Text style={styles.empty}>Pick a street to correct its text or rebuild it from fresh sources. Every passage must still cite a source.</Text>
+            <HistoryEditor />
+          </>
         ) : mode === "accounts" ? (
           <>
             <Text style={styles.empty}>Record what locals remember about a street. It appears inside that street&apos;s timeline, marked as a local account.</Text>
@@ -127,6 +137,7 @@ export default function Admin() {
                 {savedNote}
               </Text>
             ) : null}
+            <BulkTools />
             <Text style={styles.subTitle}>Already collected</Text>
             {accounts.isLoading ? (
               <ActivityIndicator color={colors.brandPrimary} />
@@ -190,20 +201,46 @@ function AccountRow({ a }: { a: LocalAccount }) {
   const styles = useStyles();
   const { colors } = useTheme();
   const qc = useQueryClient();
-  const del = useMutation({
-    mutationFn: () => api.deleteLocalAccount(a.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin-local-accounts"] });
-      qc.invalidateQueries({ queryKey: ["local-accounts"] });
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["admin-local-accounts"] });
+    qc.invalidateQueries({ queryKey: ["local-accounts"] });
+  };
+  const del = useMutation({ mutationFn: () => api.deleteLocalAccount(a.id), onSuccess: invalidate });
+  const photo = useMutation({
+    mutationFn: async () => {
+      setPhotoError(null);
+      const r = await pickPhoto();
+      if ("denied" in r) {
+        setPhotoError(r.blocked ? "Photo access is off. Allow it in Settings, then try again." : "NVM needs photo access to attach a picture.");
+        return null;
+      }
+      if ("cancelled" in r) return null;
+      return api.setAccountPhoto(a.id, r.file);
     },
+    onSuccess: (res) => res && invalidate(),
+    onError: (e: Error) => setPhotoError(e.message),
   });
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={styles.cardPlace}>{a.era_label.toUpperCase()}</Text>
       <LocalAccountCard a={a} showPlace />
-      <Pressable style={styles.remove} onPress={() => del.mutate()} disabled={del.isPending} testID={`delete-account-${a.id}`}>
-        {del.isPending ? <ActivityIndicator size="small" color={colors.error} /> : <Text style={[styles.actionText, { color: colors.error }]}>Remove</Text>}
-      </Pressable>
+      <View style={styles.rowActions}>
+        <Pressable style={styles.photoBtn} onPress={() => photo.mutate()} disabled={photo.isPending} testID={`photo-account-${a.id}`}>
+          {photo.isPending ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : <Feather name="image" size={14} color={colors.brandPrimary} />}
+          <Text style={styles.photoBtnText}>{a.photo_url ? "Replace photo" : "Add photo"}</Text>
+        </Pressable>
+        <Pressable style={styles.remove} onPress={() => (confirmRemove ? del.mutate() : setConfirmRemove(true))} disabled={del.isPending} testID={`delete-account-${a.id}`}>
+          {del.isPending ? <ActivityIndicator size="small" color={colors.error} /> : <Text style={[styles.actionText, { color: colors.error }]}>{confirmRemove ? "Tap again to remove" : "Remove"}</Text>}
+        </Pressable>
+        {confirmRemove && !del.isPending ? (
+          <Pressable style={styles.keep} onPress={() => setConfirmRemove(false)} testID={`keep-account-${a.id}`}>
+            <Text style={styles.signOutText}>Keep</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {photoError ? <Text style={styles.error}>{photoError}</Text> : null}
       {del.isError ? <Text style={styles.error}>{(del.error as Error).message}</Text> : null}
     </View>
   );
@@ -234,11 +271,15 @@ const useStyles = makeStyles((colors) => ({
   reject: { borderWidth: 1, borderColor: colors.error },
   verify: { backgroundColor: colors.success },
   actionText: { fontFamily: fonts.bodyBold, fontSize: 14 },
-  remove: { alignSelf: "flex-start", height: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center", justifyContent: "center", marginTop: spacing.sm },
+  remove: { height: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.error, alignItems: "center", justifyContent: "center" },
+  rowActions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm, alignItems: "center" },
+  keep: { height: 44, justifyContent: "center", paddingHorizontal: spacing.md },
+  photoBtn: { flexDirection: "row", alignItems: "center", gap: spacing.xs, height: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brandPrimary },
+  photoBtnText: { fontFamily: fonts.bodyBold, fontSize: 14, color: colors.brandPrimary },
   segment: { flexDirection: "row", padding: 3, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, marginBottom: spacing.lg },
   segmentBtn: { flex: 1, height: 40, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   segmentActive: { backgroundColor: colors.brandPrimary },
-  segmentText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.onSurface },
+  segmentText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.onSurface },
   segmentTextActive: { color: colors.onBrandPrimary },
   saved: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.success, marginTop: spacing.md },
   subTitle: { fontFamily: fonts.displayBold, fontSize: 20, color: colors.onSurface, marginTop: spacing["2xl"], marginBottom: spacing.md },

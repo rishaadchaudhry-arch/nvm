@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
 import { Image } from "expo-image";
-import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { api, ERAS, type SearchResult } from "@/src/api";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { pickPhoto } from "@/src/utils/pick-photo";
 import type { LocalFile } from "@/src/utils/upload";
 
-type PickedPlace = { key: string; title: string; subtitle: string };
+export type PickedPlace = { key: string; title: string; subtitle: string };
 
 const today = () => {
   const d = new Date();
@@ -52,21 +52,14 @@ export function LocalAccountForm({ onSaved }: { onSaved: () => void }) {
     },
   });
 
-  const pickPhoto = async () => {
+  const choosePhoto = async () => {
     setPhotoError(null);
-    if (Platform.OS !== "web") {
-      let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
-      if (!perm.granted && perm.canAskAgain) perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        setPhotoBlocked(!perm.canAskAgain);
-        setPhotoError("NVM needs photo access to attach a picture to this account.");
-        return;
-      }
+    const r = await pickPhoto();
+    if ("file" in r) setPhoto(r.file);
+    else if ("denied" in r) {
+      setPhotoBlocked(r.blocked);
+      setPhotoError("NVM needs photo access to attach a picture to this account.");
     }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7, allowsMultipleSelection: false });
-    if (res.canceled || !res.assets[0]) return;
-    const a = res.assets[0];
-    setPhoto({ uri: a.uri, name: a.fileName ?? "photo.jpg", mimeType: a.mimeType ?? "image/jpeg" });
   };
 
   const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(collectedOn.trim());
@@ -144,7 +137,7 @@ export function LocalAccountForm({ onSaved }: { onSaved: () => void }) {
           </Pressable>
         </View>
       ) : (
-        <Pressable onPress={pickPhoto} style={s.ghost} testID="la-add-photo">
+        <Pressable onPress={choosePhoto} style={s.ghost} testID="la-add-photo">
           <Feather name="image" size={16} color={colors.brandPrimary} />
           <Text style={s.ghostText}>Add a photo</Text>
         </Pressable>
@@ -172,7 +165,7 @@ export function LocalAccountForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function StreetPicker({ onPick }: { onPick: (p: PickedPlace) => void }) {
+export function StreetPicker({ onPick }: { onPick: (p: PickedPlace) => void }) {
   const s = useStyles();
   const { colors } = useTheme();
   const [q, setQ] = useState("");

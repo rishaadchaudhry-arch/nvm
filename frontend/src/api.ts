@@ -19,7 +19,7 @@ export type Place = {
 };
 
 export type EraEntry = { key: string; label: string; heading: string; text: string; scope: Scope; sources: number[] };
-export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap"; title: string; url: string; scope: Scope };
+export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
 
 export type History = {
   key: string;
@@ -30,7 +30,19 @@ export type History = {
   sources: Source[];
   has_records: boolean;
   built_at: string;
+  edited_at?: string | null;
+  edited_by?: string | null;
 };
+
+export type HistoryEdit = {
+  summary: string;
+  then_now: string;
+  eras: { key: string; heading: string; text: string; scope: Scope; sources: number[] }[];
+  new_sources: { title: string; url: string; scope: Scope }[];
+};
+
+export const sourceLabel = (src: Source) =>
+  src.type === "wikipedia" ? (src.lang === "hi" ? "Wikipedia (Hindi)" : "Wikipedia") : src.type === "wikidata" ? "Wikidata" : src.type === "manual" ? "Added by the NVM team" : "OpenStreetMap";
 
 export type Look = { place: Place; facing: { lat: number; lng: number }; history: History | null };
 
@@ -187,18 +199,45 @@ export const api = {
       fields,
       files: photo ? { photo } : {},
     });
-    if (!res.ok) {
-      let detail = `Request failed (${res.status})`;
-      try {
-        const j = await res.json();
-        if (typeof j.detail === "string") detail = j.detail;
-      } catch {}
-      throw new ApiError(res.status, detail);
-    }
+    if (!res.ok) throw new ApiError(res.status, await errorDetail(res));
     return (await res.json()) as LocalAccount;
   },
   deleteLocalAccount: async (id: string) => request<{ deleted: number }>(`/api/admin/local-accounts/${id}`, { method: "DELETE" }, await adminToken.get()),
+  setAccountPhoto: async (id: string, photo: LocalFile) => {
+    const res = await uploadForm(`${BASE}/api/admin/local-accounts/${id}/photo`, { headers: { Authorization: `Bearer ${await adminToken.get()}` }, files: { photo } });
+    if (!res.ok) throw new ApiError(res.status, await errorDetail(res));
+    return (await res.json()) as LocalAccount;
+  },
+  editHistory: async (key: string, body: HistoryEdit) => request<History>(`/api/admin/history/${encodeURIComponent(key)}`, { ...json(body), method: "PUT" }, await adminToken.get()),
+  rebuildHistory: async (key: string) => request<History>(`/api/admin/history/${encodeURIComponent(key)}/rebuild`, { method: "POST" }, await adminToken.get()),
+  importLocalAccounts: async (file: LocalFile) => {
+    const res = await uploadForm(`${BASE}/api/admin/local-accounts/import`, { headers: { Authorization: `Bearer ${await adminToken.get()}` }, files: { file } });
+    if (!res.ok) throw new ApiError(res.status, await errorDetail(res));
+    return (await res.json()) as ImportResult;
+  },
+  templateUrl: () => `${BASE}/api/admin/local-accounts/template.csv`,
+  exportUrl: async () => `${BASE}/api/admin/export.csv?token=${encodeURIComponent(await adminToken.get())}`,
+  exportCsv: async () => {
+    const res = await fetch(`${BASE}/api/admin/export.csv`, { headers: { Authorization: `Bearer ${await adminToken.get()}` } });
+    if (!res.ok) throw new ApiError(res.status, await errorDetail(res));
+    return res.text();
+  },
 };
+
+export type ImportResult = {
+  created: number;
+  rows: number;
+  failed: { row: number; street: string; reason: string }[];
+  created_rows: { row: number; id: string; place_title: string; era_label: string }[];
+};
+
+async function errorDetail(res: Response) {
+  try {
+    const j = await res.json();
+    if (typeof j.detail === "string") return j.detail;
+  } catch {}
+  return `Request failed (${res.status})`;
+}
 
 export function distanceM(lat1: number, lng1: number, lat2: number, lng2: number) {
   const toRad = (d: number) => (d * Math.PI) / 180;

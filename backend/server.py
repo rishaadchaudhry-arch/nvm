@@ -1,5 +1,7 @@
 import asyncio
+import csv
 import hashlib
+import io
 import logging
 import os
 import re
@@ -15,7 +17,7 @@ import jwt
 from dotenv import load_dotenv
 from emergentintegrations.llm.openai import OpenAITextToSpeech
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
 from pwdlib import PasswordHash
@@ -46,6 +48,22 @@ DEVICES_PER_IP_PER_HOUR = 20
 VOTES_PER_IP_PER_TRADITION = 3
 PHOTO_MAX_BYTES = 8 * 1024 * 1024
 ERA_LABELS = dict(he.ERAS)
+IMPORT_MAX_ROWS = 200
+IMPORT_MAX_BYTES = 2 * 1024 * 1024
+# CSV header → field. Several spellings are accepted so a spreadsheet exported from elsewhere still imports.
+IMPORT_ALIASES = {
+    "street": {"street", "place", "place_key", "location", "address"},
+    "era": {"era", "period", "century"},
+    "body": {"body", "story", "text", "account", "story_text"},
+    "told_by": {"told_by", "who", "who_told_it", "narrator", "source", "name"},
+    "village": {"village", "town", "village_or_town", "village_town", "their_village_or_town", "from"},
+    "collected_on": {"collected_on", "date", "date_collected", "collected"},
+}
+IMPORT_TEMPLATE = (
+    "street,era,story,told_by,village,collected_on\n"
+    'Nai Sarak Delhi,1900-1947,"My grandfather said the lane flooded every monsoon and the shops stood on stilts.","Shanti Devi, 82","Ballimaran, Old Delhi",2026-05-20\n'
+)
+EXPORT_COLUMNS = ["type", "id", "place_key", "place_title", "era", "era_label", "title", "body", "told_by", "village", "collected_on", "author", "status", "verified_by", "upvotes", "photo_url", "added_by", "created_at"]
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -124,6 +142,7 @@ class Source(BaseModel):
     title: str
     url: str
     scope: str
+    lang: Optional[str] = None
 
 
 class FactOut(BaseModel):
@@ -140,6 +159,34 @@ class History(BaseModel):
     sources: List[Source] = []
     has_records: bool
     built_at: datetime
+    edited_at: Optional[datetime] = None
+    edited_by: Optional[str] = None
+
+
+class EraEdit(BaseModel):
+    key: str
+    heading: str = Field("", max_length=80)
+    text: str = Field("", max_length=1200)
+    scope: str = "none"
+    sources: List[int] = []
+
+    @field_validator("heading", "text", mode="before")
+    @classmethod
+    def strip_text(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class NewSource(BaseModel):
+    title: str = Field(min_length=2, max_length=160)
+    url: str = Field(min_length=8, max_length=600, pattern=r"^https?://")
+    scope: str = "street"
+
+
+class HistoryEdit(BaseModel):
+    summary: str = Field("", max_length=400)
+    then_now: str = Field("", max_length=400)
+    eras: List[EraEdit]
+    new_sources: List[NewSource] = []
 
 
 class Tradition(BaseModel):
@@ -233,6 +280,34 @@ async def require_admin(token: Annotated[str, Depends(oauth2_scheme)]):
     return admin
 
 
+async def require_admin_link(request: Request, token: Optional[str] = Query(None)):
+    """File downloads opened in a browser tab can't send a header, so the admin token may come as ?token=."""
+    bearer = request.headers.get("authorization", "")
+    tok = bearer[7:] if bearer.lower().startswith("bearer ") else token
+    if not tok:
+        raise HTTPException(status_code=401, detail="Sign in first", headers={"WWW-Authenticate": "Bearer"})
+    return await require_admin(tok)
+
+
+def parse_era(value: str) -> Optional[str]:
+    norm = lambda s: re.sub(r"[\s_–—-]+", "", s.strip().lower())  # noqa: E731
+    v = norm(value)
+    for key, label in he.ERAS:
+        if v in {norm(key), norm(label)}:
+            return key
+    return {"before1500": "pre1500", "190047": "1900_1947", "1947now": "today", "now": "today", "present": "today"}.get(v)
+
+
+def parse_collected_on(value: str) -> Optional[str]:
+    v = value.strip()
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(v, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
 def client_ip(request: Request) -> str:
     """Client IP as seen by our own proxies. Entries left of the trusted hops are client-supplied and ignored."""
     parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
@@ -315,7 +390,7 @@ async def _build_history(key: str) -> dict:
     history = {
         "key": key,
         **body,
-        "sources": [{k: s[k] for k in ("id", "type", "title", "url", "scope")} for s in sources if s["id"] in used or s["type"] == "openstreetmap"],
+        "sources": [{**{k: s[k] for k in ("id", "type", "title", "url", "scope")}, "lang": s.get("lang")} for s in sources if s["id"] in used or s["type"] == "openstreetmap"],
         "has_records": any(e["text"] for e in body["eras"]),
         "built_at": datetime.now(timezone.utc),
     }
@@ -530,6 +605,63 @@ async def rebuild_history(key: str, admin=Depends(require_admin)):
     return {"deleted": res.deleted_count}
 
 
+@api.post("/admin/history/{key}/rebuild", response_model=History)
+async def rebuild_history_now(key: str, admin=Depends(require_admin)):
+    """Throw away the current text (including edits) and compose it again from fresh sources."""
+    await get_place(key)
+    task = _building.get(key)
+    if not task:
+        await db.histories.delete_one({"key": key})
+        task = asyncio.create_task(_build_history(key))
+        _building[key] = task
+        task.add_done_callback(lambda _t, k=key: _building.pop(k, None))
+    return History(**await asyncio.shield(task))
+
+
+@api.put("/admin/history/{key}", response_model=History)
+async def edit_history(key: str, body: HistoryEdit, admin=Depends(require_admin)):
+    """Hand-correct a street's history. Every era that has text must still cite at least one source."""
+    doc = await db.histories.find_one({"key": key}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Build the history first, then edit it")
+    sources = [s for s in doc["sources"]]
+    next_id = max((s["id"] for s in sources), default=0) + 1
+    for ns in body.new_sources:
+        if ns.scope not in he.SCOPES:
+            raise HTTPException(status_code=422, detail="Unknown source scope")
+        sources.append({"id": next_id, "type": "manual", "title": ns.title.strip(), "url": ns.url.strip(), "scope": ns.scope, "lang": None})
+        next_id += 1
+    citable = {s["id"] for s in sources if s["type"] != "openstreetmap"}
+    by_key = {e.key: e for e in body.eras}
+    eras = []
+    for era_key, label in he.ERAS:
+        e = by_key.get(era_key)
+        if e is None:
+            raise HTTPException(status_code=422, detail=f"Missing era {label}")
+        ids = sorted({i for i in e.sources if i in citable})
+        if e.text and not ids:
+            raise HTTPException(status_code=422, detail=f"{label}: add at least one source for this text, or clear the text")
+        if e.text and e.scope not in he.SCOPES:
+            raise HTTPException(status_code=422, detail=f"{label}: pick how close this fact is to the spot")
+        eras.append({"key": era_key, "label": label, "heading": e.heading if e.text else "", "text": e.text, "scope": e.scope if e.text else "none", "sources": ids if e.text else []})
+    has_records = any(e["text"] for e in eras)
+    if not has_records:
+        raise HTTPException(status_code=422, detail="This would clear every era. Use Rebuild instead, or leave at least one era with sourced text.")
+    if len({e.key for e in body.eras}) != len(body.eras) or any(e.key not in ERA_LABELS for e in body.eras):
+        raise HTTPException(status_code=422, detail="Unknown or repeated era")
+    update = {
+        "summary": body.summary.strip(),
+        "then_now": body.then_now.strip(),
+        "eras": eras,
+        "sources": sources,  # keep every source, cited or not, so an editor can re-cite it later
+        "has_records": has_records,
+        "edited_at": datetime.now(timezone.utc),
+        "edited_by": admin["email"],
+    }
+    await db.histories.update_one({"key": key}, {"$set": update})
+    return History(**{**doc, **update})
+
+
 # ---- Local accounts (admin-collected, shown inside the timeline) ----
 
 
@@ -599,24 +731,7 @@ async def create_local_account(
     )
     photo_path = None
     if photo is not None and photo.filename:
-        content_type = (photo.content_type or "").lower()
-        if not content_type.startswith("image/"):
-            raise HTTPException(status_code=422, detail="Photo must be an image")
-        data = await photo.read(PHOTO_MAX_BYTES + 1)
-        if len(data) > PHOTO_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="Photo must be under 8 MB")
-        ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/gif": "gif"}.get(content_type, "jpg")
-        try:
-            result = await store.put_object(EMERGENT_LLM_KEY, store.object_path("local-accounts", f"{account.id}.{ext}"), data, content_type)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 402:
-                raise HTTPException(status_code=402, detail="Photo storage is out of credits. Save without a photo or top up.") from exc
-            logger.error("photo upload failed: %s", exc)
-            raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
-        except Exception as exc:
-            logger.error("photo upload failed: %s", exc)
-            raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
-        photo_path = result["path"]
+        photo_path = await store_photo(account.id, photo)
         account.photo_url = f"/api/local-accounts/{account.id}/photo"
     await db.local_accounts.insert_one({**account.model_dump(), "photo_path": photo_path, "deleted": False})
     return account
@@ -628,6 +743,147 @@ async def delete_local_account(aid: str, admin=Depends(require_admin)):
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Local account not found")
     return {"deleted": 1}
+
+
+async def store_photo(account_id: str, photo: UploadFile) -> str:
+    content_type = (photo.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="Photo must be an image")
+    data = await photo.read(PHOTO_MAX_BYTES + 1)
+    if len(data) > PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Photo must be under 8 MB")
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/gif": "gif"}.get(content_type, "jpg")
+    try:
+        # A fresh object name each time so a replaced photo is never served from an old cache entry.
+        result = await store.put_object(EMERGENT_LLM_KEY, store.object_path("local-accounts", f"{account_id}-{uuid.uuid4().hex[:8]}.{ext}"), data, content_type)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 402:
+            raise HTTPException(status_code=402, detail="Photo storage is out of credits. Save without a photo or top up.") from exc
+        logger.error("photo upload failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
+    except Exception as exc:
+        logger.error("photo upload failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
+    return result["path"]
+
+
+@api.post("/admin/local-accounts/{aid}/photo", response_model=LocalAccount)
+async def set_local_account_photo(aid: str, photo: UploadFile = File(...), admin=Depends(require_admin)):
+    """Attach (or replace) the photo of an existing local account, e.g. one that came in through a CSV."""
+    doc = await db.local_accounts.find_one({"id": aid, "deleted": False}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Local account not found")
+    path = await store_photo(aid, photo)
+    photo_url = f"/api/local-accounts/{aid}/photo?v={path.rsplit('-', 1)[-1].split('.')[0]}"
+    await db.local_accounts.update_one({"id": aid}, {"$set": {"photo_path": path, "photo_url": photo_url}})
+    return LocalAccount(**{**doc, "photo_url": photo_url})
+
+
+# ---- Bulk import / export ----
+
+
+@api.get("/admin/local-accounts/template.csv", include_in_schema=False)
+async def import_template():
+    return PlainTextResponse(IMPORT_TEMPLATE, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="nvm-local-accounts-template.csv"'})
+
+
+@api.post("/admin/local-accounts/import")
+async def import_local_accounts(file: UploadFile = File(...), admin=Depends(require_admin)):
+    """Add many local accounts from a CSV. Good rows are saved, bad rows are reported, nothing is half-saved."""
+    raw = await file.read(IMPORT_MAX_BYTES + 1)
+    if len(raw) > IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="CSV must be under 2 MB")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=422, detail="The file is empty or has no header row")
+    col_for: dict[str, str] = {}
+    for header in reader.fieldnames:
+        norm = re.sub(r"[^a-z0-9]+", "_", (header or "").strip().lower()).strip("_")
+        for field, aliases in IMPORT_ALIASES.items():
+            if norm in aliases and field not in col_for:
+                col_for[field] = header
+    missing = [f for f in IMPORT_ALIASES if f not in col_for]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Missing columns: {', '.join(missing)}. Download the template to see the expected headers.")
+
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=422, detail="No rows under the header")
+    if len(rows) > IMPORT_MAX_ROWS:
+        raise HTTPException(status_code=422, detail=f"Import at most {IMPORT_MAX_ROWS} rows at a time")
+
+    place_cache: dict[str, Place] = {}
+
+    async def resolve_street(value: str) -> Place:
+        if value in place_cache:
+            return place_cache[value]
+        existing = await db.places.find_one({"key": value}, {"_id": 0})
+        if existing:
+            place = Place(**existing)
+        else:
+            hits = await he.search_places(value)
+            if not hits:
+                raise ValueError("Street not found on the map")
+            place = await resolve_place(hits[0]["lat"], hits[0]["lng"])
+        place_cache[value] = place
+        return place
+
+    created: list[dict] = []
+    failed: list[dict] = []
+    max_date = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    for i, row in enumerate(rows, start=2):  # row 1 is the header
+        get = lambda f: (row.get(col_for[f]) or "").strip()  # noqa: E731
+        street = get("street")
+        try:
+            if not any(get(f) for f in IMPORT_ALIASES):
+                continue  # blank line
+            if not street:
+                raise ValueError("Street is empty")
+            era = parse_era(get("era"))
+            if not era:
+                raise ValueError(f"Unknown era '{get('era')}'. Use one of: {', '.join(l for _, l in he.ERAS)}")
+            body = get("body")
+            if not 10 <= len(body) <= 2000:
+                raise ValueError("Story must be 10–2000 characters")
+            told_by, village = get("told_by"), get("village")
+            if not 1 <= len(told_by) <= 80 or not 1 <= len(village) <= 80:
+                raise ValueError("Who told it and village/town must each be 1–80 characters")
+            collected = parse_collected_on(get("collected_on"))
+            if not collected:
+                raise ValueError("Date collected must look like 2026-05-20")
+            if collected > max_date:
+                raise ValueError("Date collected can't be in the future")
+            try:
+                place = await resolve_street(street)
+            except HTTPException as exc:
+                raise ValueError(exc.detail) from exc
+            account = LocalAccount(place_key=place.key, place_title=place.title, era=era, era_label=ERA_LABELS[era], body=body, told_by=told_by, village=village, collected_on=collected, added_by=admin["email"])
+            await db.local_accounts.insert_one({**account.model_dump(), "photo_path": None, "deleted": False})
+            created.append({"row": i, "id": account.id, "place_title": place.title, "era_label": account.era_label})
+        except ValueError as exc:
+            failed.append({"row": i, "street": street, "reason": str(exc)})
+        except Exception as exc:
+            logger.error("import row %s failed: %s", i, exc)
+            failed.append({"row": i, "street": street, "reason": "Couldn't look up this street right now"})
+    return {"created": len(created), "failed": failed, "rows": len(rows), "created_rows": created}
+
+
+@api.get("/admin/export.csv", include_in_schema=False)
+async def export_csv(admin=Depends(require_admin_link)):
+    """Everything people have contributed, as one spreadsheet: community stories and local accounts."""
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=EXPORT_COLUMNS, extrasaction="ignore")
+    w.writeheader()
+    async for d in db.local_accounts.find({"deleted": False}, LOCAL_ACCOUNT_PROJECTION).sort("created_at", 1):
+        w.writerow({**d, "type": "local_account", "created_at": d["created_at"].isoformat()})
+    async for d in db.traditions.find({}, TRADITION_PROJECTION).sort("created_at", 1):
+        w.writerow({**d, "type": "community_story", "created_at": d["created_at"].isoformat()})
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return PlainTextResponse(out.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="nvm-backup-{stamp}.csv"'})
 
 
 # ---- Narration ----

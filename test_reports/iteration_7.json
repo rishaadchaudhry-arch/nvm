@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 7: tested per-account photo attach/replace, admin history rebuild/edit (PUT validation rules), Hindi Wikipedia sources, plus a regression check of GET /history and /look. Backend: 18/18 pytest passed. Frontend at 390x844: all requested flows pass (3 admin tabs; History editor search/pick/edit/save; clearing an era's sources shows the inline error and he-problems and disables he-save; adding a new source and citing [17] saves with a 200 and shows 'Added by the NVM team'; rebuild confirm, cancel and rebuild work and show the rebuilt note; the place page shows 'Wikipedia (Hindi)' labels and the 'checked and corrected by the NVM team' disclaimer; Add photo opens the file chooser and the image shows, then the label changes to Replace photo; BulkTools text was updated). Final state: nai-sarak-1017b307 is REBUILT (edited_at null, en+hi sources, no TEST text). Shanti Devi, Ram Lal and Iqbal are untouched. TEST_ accounts were deleted by id. No deprecated Expo packages were found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/history/{key}", "issue": "Any source no era cites after an edit is deleted from the stored history for good (server.py:650-651, kept_sources). Example: we un-cited manual source [16] and it vanished from 'Sources you can cite'. Only a full rebuild brings sources back, so an admin can't re-cite a source they removed by mistake."},
+      {"endpoint": "PUT /api/admin/history/{key}", "issue": "Era keys that are unknown or duplicated are silently ignored (by_key dict). The endpoint also accepts an edit with every era empty and no summary, which wipes the history to has_records=false. Consider a 422 or a confirmation for both."},
+      {"endpoint": "POST /api/admin/history/{key}/rebuild", "issue": "Content quality: Wikipedia geosearch pulled in loosely related articles as sources ('Mongol invasion of India (1303)', 'Battle of Kili') for Nai Sarak. They are cited, but their relevance to the street is weak."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "HistoryEditor remove new source", "issue": "he-remove-source-i clears ALL pending new-source citations (filters id < nextId), not just the removed one. The new sources after it shift down to lower ids, so an era can silently lose citations. Reference: src/components/history-editor.tsx:173", "testID": "he-remove-source-0", "priority": "LOW"},
+      {"component": "HistoryEditor validation", "issue": "The client-side 'problems' check counts any id in e.sources, including an OpenStreetMap id, but the server strips OSM ids and returns 422. The UI could show Save enabled and then get a server error. Reference: history-editor.tsx:83", "testID": "he-save", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > History", "issues": ["Scope and cite chips are 36px tall, below the 44px minimum touch target (history-editor.tsx:258)", "The scope chip row scrolls horizontally, so 'the wider city'/'the wider region' are cut off at 390px with no visible hint that more chips exist"]},
+      {"screen": "Admin > Local accounts", "issues": ["'Remove' deletes a real account immediately with no confirmation (admin.tsx:233). This is risky for collected oral histories."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_history_edit_photo.py", "/app/test_reports/pytest/iteration_7.xml"],
+  "action_items": [
+    "Decide whether PUT /admin/history should keep uncited sources (e.g. keep all non-OSM sources) so that un-citing is reversible (server.py:650-651)",
+    "Fix he-remove-source to remove only that source's id and remap the ids of the new sources after it",
+    "Exclude OpenStreetMap ids when the client checks whether an era has a source",
+    "Raise chip height to 44px; optionally add a confirmation for local-account Remove",
+    "Optional: reject unknown or duplicate era keys and an edit with every era empty (422)"
+  ],
+  "critical_code_review_comments": [
+    "server.py edit_history: the 'kept_sources' pruning loses sources permanently (see minor issue)",
+    "The rebuild endpoint correctly reuses an in-flight build task via asyncio.shield, and the photo replace uses a fresh object name plus ?v= for cache busting. Both look good."
+  ],
+  "updated_files": ["/app/backend/tests/test_history_edit_photo.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Two TEST_ local accounts were created on nai-sarak-1017b307 for the photo tests and deleted by id afterwards. The history was edited with TEST_ text and then rebuilt (final state clean).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0 and env var EXPO_PUBLIC_BACKEND_URL. test_history_edit_photo.py rebuilds nai-sarak first, then edits it; if you need it clean, rebuild again afterwards (the UI 'he-rebuild' tap-twice flow or POST /api/admin/history/{key}/rebuild, ~20-40s). History ids grow on each manual add (e.g. [16], then [17]).",
+  "rca_of_issue": ""
+}

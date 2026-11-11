@@ -25,7 +25,7 @@ from emergentintegrations.llm.chat import LlmChat, StreamDone, TextDelta, UserMe
 logger = logging.getLogger(__name__)
 
 UA = "NVM-app/1.0 (street history lookup; contact: dev@nvm.app)"
-WIKI_API = "https://en.wikipedia.org/w/api.php"
+WIKI_LANGS = ("en", "hi")  # Hindi Wikipedia is often far richer for small towns and lanes
 NOMINATIM = "https://nominatim.openstreetmap.org"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 LLM_PROVIDER, LLM_MODEL = "openai", "gpt-5.6-terra"
@@ -141,15 +141,38 @@ def place_from_reverse(rev: dict) -> dict:
 # ------------------------------ Wikipedia / Wikidata ------------------------
 
 
-async def _wiki(client: httpx.AsyncClient, params: dict) -> dict:
-    r = await client.get(WIKI_API, params={**params, "format": "json", "formatversion": 2}, timeout=12)
+async def _wiki(client: httpx.AsyncClient, params: dict, lang: str = "en") -> dict:
+    r = await client.get(f"https://{lang}.wikipedia.org/w/api.php", params={**params, "format": "json", "formatversion": 2}, timeout=12)
     r.raise_for_status()
     return r.json()
 
 
-async def wiki_geosearch(client: httpx.AsyncClient, lat: float, lng: float) -> list[tuple[str, float]]:
-    d = await _wiki(client, {"action": "query", "list": "geosearch", "gscoord": f"{lat}|{lng}", "gsradius": 600, "gslimit": 8})
+async def wiki_geosearch(client: httpx.AsyncClient, lat: float, lng: float, lang: str = "en") -> list[tuple[str, float]]:
+    d = await _wiki(client, {"action": "query", "list": "geosearch", "gscoord": f"{lat}|{lng}", "gsradius": 600, "gslimit": 8}, lang)
     return [(g["title"], float(g["dist"])) for g in d.get("query", {}).get("geosearch", [])]
+
+
+async def wiki_langlink(client: httpx.AsyncClient, title: str, lang: str) -> Optional[str]:
+    """The same article in another language, via Wikipedia's own interlanguage links."""
+    d = await _wiki(client, {"action": "query", "prop": "langlinks", "lllang": lang, "redirects": 1, "titles": title})
+    for p in d.get("query", {}).get("pages", []):
+        for ll in p.get("langlinks", []):
+            if ll.get("lang") == lang and ll.get("title"):
+                return ll["title"]
+    return None
+
+
+async def hi_wiki_find(client: httpx.AsyncClient, name: str, context: str) -> Optional[str]:
+    """Hindi article for an English place name: accept a hit only if its intro mentions that name."""
+    d = await _wiki(client, {"action": "query", "list": "search", "srsearch": f"{name} {context}".strip(), "srlimit": 3}, "hi")
+    hits = [h["title"] for h in d.get("query", {}).get("search", [])]
+    if not hits:
+        return None
+    intros = await asyncio.gather(*[_safe(wiki_extract(client, t, "hi"), f"hi-intro:{t}") for t in hits])
+    for title, ext in zip(hits, intros):
+        if ext and name.lower() in ext[1][:600].lower():
+            return title
+    return None
 
 
 async def wiki_find(client: httpx.AsyncClient, name: str, context: str) -> Optional[str]:
@@ -173,14 +196,14 @@ def _trim_extract(text: str) -> str:
     history = []
     for i in range(1, len(parts) - 2, 3):
         heading, body = parts[i + 1], parts[i + 2]
-        if re.search(r"histor|etymolog|origin|name|founding|partition|colonial|mughal|ancient|medieval", heading, re.I):
+        if re.search(r"histor|etymolog|origin|name|founding|partition|colonial|mughal|ancient|medieval|इतिहास|नाम|उत्पत्ति|स्थापना|प्राचीन|मध्यकाल|मुग़ल|मुगल|विभाजन|औपनिवेशिक|ब्रिटिश", heading, re.I):
             history.append(f"{heading}: {body.strip()}")
     out = (intro + "\n" + "\n".join(history)).strip()
     return out[:MAX_SOURCE_CHARS]
 
 
-async def wiki_extract(client: httpx.AsyncClient, title: str) -> Optional[tuple[str, str]]:
-    d = await _wiki(client, {"action": "query", "prop": "extracts", "explaintext": 1, "exsectionformat": "wiki", "redirects": 1, "titles": title})
+async def wiki_extract(client: httpx.AsyncClient, title: str, lang: str = "en") -> Optional[tuple[str, str]]:
+    d = await _wiki(client, {"action": "query", "prop": "extracts", "explaintext": 1, "exsectionformat": "wiki", "redirects": 1, "titles": title}, lang)
     pages = d.get("query", {}).get("pages", [])
     if not pages or pages[0].get("missing"):
         return None
@@ -223,8 +246,9 @@ async def _safe(coro, label: str):
 async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
-        geo, wd, *level_titles = await asyncio.gather(
+        geo, geo_hi, wd, *level_titles = await asyncio.gather(
             _safe(wiki_geosearch(c, lat, lng), "geosearch"),
+            _safe(wiki_geosearch(c, lat, lng, "hi"), "geosearch:hi"),
             _safe(wikidata_nearby(c, lat, lng), "wikidata"),
             *[
                 _safe(wiki_find(c, name, context if scope in ("spot", "street", "neighbourhood") else ("district" if scope == "district" else "")), f"find:{name}")
@@ -244,13 +268,42 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
             if title not in seen:
                 seen.add(title)
                 unique.append((scope, title))
-        extracts = await asyncio.gather(*[_safe(wiki_extract(c, t), f"extract:{t}") for _, t in unique[:9]])
+        unique = unique[:9]
+
+        # Hindi Wikipedia: the Hindi version of each English article, Hindi articles geotagged nearby, and a
+        # direct Hindi search for the narrow levels (street, locality, town) that English often lacks.
+        narrow_levels = [(s, n) for s, n in place["levels"] if s in ("spot", "street", "neighbourhood", "city")]
+        hi_links, *hi_found = await asyncio.gather(
+            asyncio.gather(*[_safe(wiki_langlink(c, t, "hi"), f"langlink:{t}") for _, t in unique]),
+            *[_safe(hi_wiki_find(c, name, context if scope != "city" else place.get("state") or ""), f"hi-find:{name}") for scope, name in narrow_levels],
+        )
+        hi_candidates: list[tuple[str, str]] = []
+        for (scope, _), hi_title in zip(unique, hi_links):
+            if hi_title:
+                hi_candidates.append((scope, hi_title))
+        for title, _dist in (geo_hi or [])[:4]:
+            hi_candidates.append(("neighbourhood", title))
+        for (scope, _), title in zip(narrow_levels, hi_found):
+            if title:
+                hi_candidates.append((scope, title))
+        hi_seen, hi_unique = set(), []
+        for scope, title in hi_candidates:
+            if title not in hi_seen:
+                hi_seen.add(title)
+                hi_unique.append((scope, title))
+        hi_unique = hi_unique[:6]
+
+        extracts, hi_extracts = await asyncio.gather(
+            asyncio.gather(*[_safe(wiki_extract(c, t), f"extract:{t}") for _, t in unique]),
+            asyncio.gather(*[_safe(wiki_extract(c, t, "hi"), f"extract:hi:{t}") for _, t in hi_unique]),
+        )
 
     sources: list[dict] = []
-    for (scope, _), ext in zip(unique[:9], extracts):
-        if ext:
-            title, text = ext
-            sources.append({"type": "wikipedia", "title": title, "url": f"https://en.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}", "scope": scope, "text": text})
+    for lang, items, exts in (("en", unique, extracts), ("hi", hi_unique, hi_extracts)):
+        for (scope, _), ext in zip(items, exts):
+            if ext:
+                title, text = ext
+                sources.append({"type": "wikipedia", "lang": lang, "title": title, "url": f"https://{lang}.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}", "scope": scope, "text": text})
     if wd:
         sources.append({"type": "wikidata", "title": "Wikidata: mapped places within 400 m", "url": f"https://www.wikidata.org/wiki/Special:Nearby#/coord/{lat},{lng}", "scope": "spot", "text": "\n".join(wd)[:MAX_SOURCE_CHARS]})
     sources.append({"type": "openstreetmap", "title": "OpenStreetMap address", "url": place.get("osm_url") or "https://www.openstreetmap.org", "scope": "street", "text": place.get("display_name", "")})
@@ -264,6 +317,8 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
 SYSTEM = """You write the history of a precise spot for a camera app, using ONLY the numbered sources given.
 Rules:
 - Never use outside knowledge. Every sentence must be supported by the cited sources.
+- Some sources are in Hindi (from Hindi Wikipedia). Read them like any other source, translate the facts you
+  use into English, and cite them by number. Keep Indian names and terms as they are commonly written in English.
 - For each era give what is known about THIS spot. If sources only describe the wider area, write about the
   wider area and set scope accordingly: spot (this building/site), street, neighbourhood, city, region.
   Prefer the narrowest scope the sources support.
@@ -292,7 +347,7 @@ def _parse_json(raw: str) -> dict:
 
 
 async def compose_history(api_key: str, place: dict, sources: list[dict]) -> dict:
-    src_block = "\n\n".join(f"[{s['id']}] ({s['type']}, about the {s['scope']}) {s['title']}\n{s['text']}" for s in sources if s["type"] != "openstreetmap")
+    src_block = "\n\n".join(f"[{s['id']}] ({s['type']}{' in Hindi' if s.get('lang') == 'hi' else ''}, about the {s['scope']}) {s['title']}\n{s['text']}" for s in sources if s["type"] != "openstreetmap")
     prompt = f"Spot: {place['title']} — {place['display_name']}\n\nSOURCES:\n{src_block}"
     chat = LlmChat(api_key=api_key, session_id=f"nvm-{uuid.uuid4()}", system_message=SYSTEM).with_model(LLM_PROVIDER, LLM_MODEL)
     chunks: list[str] = []

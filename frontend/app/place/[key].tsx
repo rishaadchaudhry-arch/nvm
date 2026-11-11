@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, SCOPE_LABEL, type LocalAccount, type Source } from "@/src/api";
+import { api, SCOPE_LABEL, sourceLabel, type LocalAccount, type Source } from "@/src/api";
 import { ErrorView } from "@/src/components/error-view";
 import { LocalAccountCard } from "@/src/components/local-account-card";
 import { CommunityCard, DidYouKnowCard } from "@/src/components/tradition-cards";
@@ -213,7 +213,7 @@ export default function PlaceHistory() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.srcTitle}>{src.title}</Text>
                   <Text style={s.srcMeta}>
-                    {src.type === "wikipedia" ? "Wikipedia" : src.type === "wikidata" ? "Wikidata" : "OpenStreetMap"} · {SCOPE_LABEL[src.scope] || "Map data"}
+                    {sourceLabel(src)} · {SCOPE_LABEL[src.scope] || "Map data"}
                   </Text>
                 </View>
                 <Feather name="external-link" size={14} color={colors.muted} />
@@ -222,6 +222,7 @@ export default function PlaceHistory() {
             {sourceById.size ? (
               <Text style={s.disclaimer}>
                 Written by AI only from the sources above, and labelled by how close each fact is to this exact spot. Tap a source to check it.
+                {h.edited_at ? " Some passages were checked and corrected by the NVM team." : ""}
               </Text>
             ) : null}
           </>

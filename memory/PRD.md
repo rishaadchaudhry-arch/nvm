@@ -23,6 +23,8 @@
 - Admin → "Local accounts" tab: add an entry for any street (search → pick), era, story text, who told it, their village/town, date collected, optional photo (Emergent Object Storage via backend). Shown inside the matching era node of the street timeline as a "LOCAL ACCOUNT" card (brown left bar, tinted panel, legend) — separate from sourced Wikipedia text. Timeline also renders when a street has only local accounts and no written records. Soft delete from admin.
 - Endpoints: POST/GET/DELETE /api/admin/local-accounts, GET /api/local-accounts?place_key=, GET /api/local-accounts/{id}/photo
 - Tested iteration_5: backend 36/36, admin + timeline flows pass
+- Bulk CSV import (street name or key, era label/key, flexible dates; per-row failure report) + CSV backup export of all stories and local accounts (iteration_6)
+- Admin "History" tab: edit any street's summary/then-now/eras with per-era scope + citation toggles, add manual sources, rebuild from fresh sources; server rejects text without a citable source. "Add/Replace photo" on existing accounts. Hindi Wikipedia (geosearch, interlanguage links, direct search) added as a source; shown as "Wikipedia (Hindi)" (iteration_7)
 
 ## Backlog
 - P0 before launch: replace public Nominatim with a paid geocoder (public usage policy disallows heavy app traffic); re-check TRUSTED_PROXY_HOPS in production
