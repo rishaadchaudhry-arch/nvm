@@ -25,8 +25,8 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
-import object_storage as store
 import openai_voice
+import photo_storage
 import share_card
 
 ROOT_DIR = Path(__file__).parent
@@ -34,7 +34,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]  # object storage only
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")  # only needed to migrate old photos out of Emergent storage
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]  # history writing + narration
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"].lower()
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
@@ -69,6 +69,7 @@ EXPORT_COLUMNS = ["type", "id", "place_key", "place_title", "era", "era_label", 
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
+photos = photo_storage.make_store(db)
 logger = logging.getLogger(__name__)
 
 TTS_CACHE_DIR = ROOT_DIR / "tts_cache"
@@ -91,6 +92,7 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created"),
     ],
     "admins": [IndexModel([("email", ASCENDING)], name="email", unique=True)],
+    "photos": [IndexModel([("id", ASCENDING)], name="id", unique=True)],
     "local_accounts": [
         IndexModel([("id", ASCENDING)], name="id", unique=True),
         IndexModel([("place_key", ASCENDING), ("deleted", ASCENDING), ("created_at", DESCENDING)], name="place_deleted_created"),
@@ -698,7 +700,9 @@ async def local_account_photo(aid: str):
     if not doc or not doc.get("photo_path"):
         raise HTTPException(status_code=404, detail="Photo not found")
     try:
-        data, content_type = await store.get_object(EMERGENT_LLM_KEY, doc["photo_path"])
+        data, content_type = await photos.get(doc["photo_path"])
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Photo not found")
     except Exception as exc:
         logger.error("photo fetch failed for %s: %s", aid, exc)
         raise HTTPException(status_code=502, detail="Photo unavailable right now") from exc
@@ -766,19 +770,35 @@ async def store_photo(account_id: str, photo: UploadFile) -> str:
     data = await photo.read(PHOTO_MAX_BYTES + 1)
     if len(data) > PHOTO_MAX_BYTES:
         raise HTTPException(status_code=413, detail="Photo must be under 8 MB")
-    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/gif": "gif"}.get(content_type, "jpg")
     try:
-        # A fresh object name each time so a replaced photo is never served from an old cache entry.
-        result = await store.put_object(EMERGENT_LLM_KEY, store.object_path("local-accounts", f"{account_id}-{uuid.uuid4().hex[:8]}.{ext}"), data, content_type)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 402:
-            raise HTTPException(status_code=402, detail="Photo storage is out of credits. Save without a photo or top up.") from exc
-        logger.error("photo upload failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
+        prepared, prepared_type = await asyncio.to_thread(photo_storage.prepare_image, data)
     except Exception as exc:
-        logger.error("photo upload failed: %s", exc)
+        raise HTTPException(status_code=422, detail="That file isn't an image we can read") from exc
+    try:
+        return await photos.put(prepared, prepared_type)
+    except Exception as exc:
+        logger.error("photo upload failed for %s: %s", account_id, exc)
         raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
-    return result["path"]
+
+
+async def migrate_photos_from_emergent() -> None:
+    """One-off: copy any photo still held in Emergent Object Storage into the active store. Safe to re-run."""
+    pending = await db.local_accounts.find({"photo_path": {"$regex": "^nvm/"}}, {"_id": 0, "id": 1, "photo_path": 1}).to_list(1000)
+    if not pending:
+        return
+    import object_storage as legacy
+
+    moved = 0
+    for doc in pending:
+        try:
+            data, _ = await legacy.get_object(EMERGENT_LLM_KEY, doc["photo_path"])
+            prepared, prepared_type = await asyncio.to_thread(photo_storage.prepare_image, data)
+            new_path = await photos.put(prepared, prepared_type)
+            await db.local_accounts.update_one({"id": doc["id"], "photo_path": doc["photo_path"]}, {"$set": {"photo_path": new_path, "legacy_photo_path": doc["photo_path"]}})
+            moved += 1
+        except Exception as exc:
+            logger.error("photo migration failed for %s: %s", doc["id"], exc)
+    logger.info("photo migration: moved %s of %s photos into %s", moved, len(pending), photos.scheme)
 
 
 @api.post("/admin/local-accounts/{aid}/photo", response_model=LocalAccount)
@@ -788,7 +808,8 @@ async def set_local_account_photo(aid: str, photo: UploadFile = File(...), admin
     if not doc:
         raise HTTPException(status_code=404, detail="Local account not found")
     path = await store_photo(aid, photo)
-    photo_url = f"/api/local-accounts/{aid}/photo?v={path.rsplit('-', 1)[-1].split('.')[0]}"
+    # A fresh ?v= each time so a replaced photo is never served from an old cache entry.
+    photo_url = f"/api/local-accounts/{aid}/photo?v={path.split(':', 1)[-1][:8]}"
     await db.local_accounts.update_one({"id": aid}, {"$set": {"photo_path": path, "photo_url": photo_url}})
     return LocalAccount(**{**doc, "photo_url": photo_url})
 
@@ -985,10 +1006,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 async def startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
     await seed_admin()
-    try:
-        await store.init_storage(EMERGENT_LLM_KEY)
-    except Exception as exc:
-        logger.error("object storage init failed (will retry on first upload): %s", exc)
+    app.state.photo_migration = asyncio.create_task(migrate_photos_from_emergent())
 
 
 @app.on_event("shutdown")

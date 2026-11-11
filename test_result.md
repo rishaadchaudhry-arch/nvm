@@ -127,3 +127,9 @@
 ## OpenAI key switch (2026-11-11)
 - backend/openai_voice.py: generate_text (gpt-6-sol, Responses API) and synthesize_mp3 (gpt-realtime-2.1-mini via client.realtime.connect, PCM24k → MP3 via lameenc). history_engine.compose_history and server.narrate now use OPENAI_API_KEY; emergentintegrations no longer imported. openai upgraded to 3.49.0.
 - Verified: key authenticates; both text and realtime calls currently return insufficient_quota (user's OpenAI account has no credits) → surfaced as a clear 502 message via openai_error_detail. Cached histories, cards, local accounts, stories unaffected. Live generation to be re-verified once the user adds OpenAI credits.
+
+## Photo storage moved to MongoDB (2026-11-11)
+- backend/photo_storage.py: PhotoStore protocol (put/get, scheme-prefixed paths) + MongoPhotoStore ("mongo:<id>" in `photos` collection) + prepare_image (EXIF transpose, RGB, ≤1200px longest side, JPEG q82) + make_store() factory for a future S3/R2 store.
+- server.py: store_photo → prepare_image → photos.put; GET /api/local-accounts/{id}/photo → photos.get; startup task migrate_photos_from_emergent() moved 7/7 legacy "nvm/..." photos into Mongo (legacy_photo_path kept). object_storage.py now only used by the migration. EMERGENT_LLM_KEY optional.
+- Verified: 3000x2000 PNG upload → stored 1200x800 JPEG (14.8 KB) → served 200 image/jpeg; migrated photo serves 200; place page renders photos.
+- Admin creds changed by user via secrets (see /app/memory/test_credentials.md); stale admin@yatra.app removed.

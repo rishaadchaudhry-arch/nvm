@@ -6,7 +6,7 @@
 ## User choices
 - Story verification: BOTH 5 community upvotes AND admin approval
 - Camera works on location (search lets you read any street remotely)
-- AI on the user's own OPENAI_API_KEY (switched 2026-11-11): history text = gpt-6-sol via Responses API; narration = gpt-realtime-2.1-mini over the Realtime API (PCM → MP3 with lameenc, voice "marin"), because tts-1/tts-1-hd/gpt-4o-mini-tts shut down 6 Jan 2027. EMERGENT_LLM_KEY is now used only for Emergent Object Storage (local-account photos).
+- AI on the user's own OPENAI_API_KEY (switched 2026-11-11): history text = gpt-6-sol via Responses API; narration = gpt-realtime-2.1-mini over the Realtime API (PCM → MP3 with lameenc, voice "marin"), because tts-1/tts-1-hd/gpt-4o-mini-tts shut down 6 Jan 2027. Photos (local accounts) are stored in MongoDB via backend/photo_storage.py (resized ≤1200px JPEG, served at /api/local-accounts/{id}/photo); the store is a small interface ready for S3/R2. Legacy Emergent-stored photos were migrated on 2026-11-11. The app no longer depends on Emergent services at runtime.
 - Design: simple, warm white/brown (Playfair Display + DM Sans)
 - History text: AI (GPT-5.6-terra) may ONLY arrange fetched open-data sources. Every era is cited and scope-labelled, and empty eras stay empty. (This replaces the v2 choice of "nothing without hand-written content", because v3 needs coverage of any street.)
 
