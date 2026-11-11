@@ -15,7 +15,6 @@ import emoji
 import httpx
 import jwt
 from dotenv import load_dotenv
-from emergentintegrations.llm.openai import OpenAITextToSpeech
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -27,6 +26,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
 import object_storage as store
+import openai_voice
 import share_card
 
 ROOT_DIR = Path(__file__).parent
@@ -34,7 +34,8 @@ load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]  # object storage only
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]  # history writing + narration
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"].lower()
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
@@ -338,6 +339,16 @@ def clean_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def openai_error_detail(exc: Exception, fallback: str) -> str:
+    """Turn the two OpenAI failures a user can actually fix into plain words; everything else stays generic."""
+    msg = str(exc).lower()
+    if "credits" in msg or "quota" in msg or "billing" in msg:
+        return "The OpenAI account behind NVM has no credits left. Add billing at platform.openai.com and try again."
+    if "incorrect api key" in msg or "invalid_api_key" in msg or "401" in msg:
+        return "The OpenAI key is not valid. Update it and try again."
+    return fallback
+
+
 async def list_traditions(query: dict, device_token: Optional[str], limit: int = 100) -> List[TraditionOut]:
     device_id = device_from_token(device_token)
     docs = await db.traditions.find(query, {"_id": 0, "voter_ips": 0, "location": 0}).sort("created_at", -1).to_list(limit)
@@ -385,10 +396,10 @@ async def _build_history(key: str) -> dict:
     body = he.empty_history()
     if has_text_sources:
         try:
-            body = await asyncio.wait_for(he.compose_history(EMERGENT_LLM_KEY, place_doc, sources), timeout=90)
+            body = await asyncio.wait_for(he.compose_history(OPENAI_API_KEY, place_doc, sources), timeout=120)
         except Exception as exc:
             logger.error("compose failed for %s: %s", key, exc)
-            raise HTTPException(status_code=502, detail="Couldn't put this history together right now. Try again.") from exc
+            raise HTTPException(status_code=502, detail=openai_error_detail(exc, "Couldn't put this history together right now. Try again.")) from exc
     used = {i for e in body["eras"] for i in e["sources"]} | {i for d in body["did_you_know"] for i in d["sources"]}
     history = {
         "key": key,
@@ -893,25 +904,24 @@ async def export_csv(admin=Depends(require_admin_link)):
 
 
 @api.post("/history/{key}/narrate")
-async def narrate(key: str, voice: Literal["fable", "sage", "onyx", "coral"] = "fable"):
+async def narrate(key: str, voice: Literal["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"] = openai_voice.DEFAULT_VOICE):
     doc = await db.histories.find_one({"key": key}, {"_id": 0})
     if not doc or not doc.get("has_records"):
         raise HTTPException(status_code=404, detail="No story to narrate yet")
     place = await get_place(key)
     parts = [f"{place.title}."] + [f"{e['label']}. {e['text']}" for e in doc["eras"] if e["text"]]
     text = clean_for_tts(" ".join(parts))[:3800]
-    audio_key = hashlib.sha256(f"{voice}|tts-1|mp3|{text}".encode()).hexdigest()
+    audio_key = hashlib.sha256(f"{voice}|{openai_voice.VOICE_MODEL}|mp3|{text}".encode()).hexdigest()
     path = TTS_CACHE_DIR / f"{audio_key}.mp3"
     if not path.exists():
         try:
-            audio = await asyncio.wait_for(
-                OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY).generate_speech(text=text, model="tts-1", voice=voice, response_format="mp3"),
-                timeout=60,
-            )
+            audio = await asyncio.wait_for(openai_voice.synthesize_mp3(OPENAI_API_KEY, text, voice), timeout=240)
         except Exception as exc:
             logger.error("tts failed for %s: %s", key, exc)
-            raise HTTPException(status_code=502, detail="Narration unavailable right now") from exc
-        path.write_bytes(audio)
+            raise HTTPException(status_code=502, detail=openai_error_detail(exc, "Narration unavailable right now")) from exc
+        tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        tmp.write_bytes(audio)
+        tmp.replace(path)
     return {"audio_url": f"/api/tts/{audio_key}.mp3"}
 
 

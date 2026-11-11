@@ -123,3 +123,7 @@
 ## Share card (2026-11-11)
 - GET /api/history/{key}/card-facts → [{label,text}] (404 if no records); GET /api/history/{key}/card.png?fact=N → 1080x1350 PNG rendered with Pillow (backend/share_card.py, fonts in backend/fonts, cached in backend/card_cache), fact index wraps modulo count; 404 if no records.
 - Frontend: share-btn in place/[key] header (only when has_records) opens ShareCardModal (src/components/share-card.tsx): preview image, "Fact i of n", Another fact (cycles), Share (web: opens PNG in new tab; native: downloads to cache + expo-sharing sheet).
+
+## OpenAI key switch (2026-11-11)
+- backend/openai_voice.py: generate_text (gpt-6-sol, Responses API) and synthesize_mp3 (gpt-realtime-2.1-mini via client.realtime.connect, PCM24k → MP3 via lameenc). history_engine.compose_history and server.narrate now use OPENAI_API_KEY; emergentintegrations no longer imported. openai upgraded to 3.49.0.
+- Verified: key authenticates; both text and realtime calls currently return insufficient_quota (user's OpenAI account has no credits) → surfaced as a clear 502 message via openai_error_detail. Cached histories, cards, local accounts, stories unaffected. Live generation to be re-verified once the user adds OpenAI credits.

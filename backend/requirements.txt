@@ -58,6 +58,7 @@ jmespath==1.1.0
 jq==1.13.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
+lameenc==1.9.0
 librt==0.16.0
 litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl#sha256=adf398c513273de9341f61822296c6b2145f7f2dc4a69daf3ac04829f5bde3f8
 markdown-it-py==4.2.0
@@ -70,7 +71,7 @@ mypy==2.4.1
 mypy_extensions==1.2.0
 numpy==2.4.6
 oauthlib==4.0.1
-openai==1.99.9
+openai==3.49.0
 packaging==26.3
 pandas==3.1.1
 passlib==1.7.4

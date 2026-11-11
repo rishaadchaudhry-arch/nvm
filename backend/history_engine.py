@@ -15,12 +15,12 @@ import logging
 import math
 import re
 import time
-import uuid
 from typing import Optional
 from urllib.parse import quote
 
 import httpx
-from emergentintegrations.llm.chat import LlmChat, StreamDone, TextDelta, UserMessage
+
+import openai_voice
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ UA = "NVM-app/1.0 (street history lookup; contact: dev@nvm.app)"
 WIKI_LANGS = ("en", "hi")  # Hindi Wikipedia is often far richer for small towns and lanes
 NOMINATIM = "https://nominatim.openstreetmap.org"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
-LLM_PROVIDER, LLM_MODEL = "openai", "gpt-5.6-terra"
 
 ERAS = [
     ("pre1500", "Before 1500"),
@@ -349,14 +348,7 @@ def _parse_json(raw: str) -> dict:
 async def compose_history(api_key: str, place: dict, sources: list[dict]) -> dict:
     src_block = "\n\n".join(f"[{s['id']}] ({s['type']}{' in Hindi' if s.get('lang') == 'hi' else ''}, about the {s['scope']}) {s['title']}\n{s['text']}" for s in sources if s["type"] != "openstreetmap")
     prompt = f"Spot: {place['title']} — {place['display_name']}\n\nSOURCES:\n{src_block}"
-    chat = LlmChat(api_key=api_key, session_id=f"nvm-{uuid.uuid4()}", system_message=SYSTEM).with_model(LLM_PROVIDER, LLM_MODEL)
-    chunks: list[str] = []
-    async for ev in chat.stream_message(UserMessage(text=prompt)):
-        if isinstance(ev, TextDelta):
-            chunks.append(ev.content)
-        elif isinstance(ev, StreamDone):
-            break
-    data = _parse_json("".join(chunks))
+    data = _parse_json(await openai_voice.generate_text(api_key, SYSTEM, prompt))
 
     valid_ids = {s["id"] for s in sources if s["type"] != "openstreetmap"}  # the map address is never a history citation
 
