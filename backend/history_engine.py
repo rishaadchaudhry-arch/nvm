@@ -1,10 +1,14 @@
 """Builds an era-by-era history for any spot from open data.
 
-Pipeline (all sources are public and global, so this works for any street in India and later anywhere):
-1. OpenStreetMap / Nominatim reverse-geocode -> street, neighbourhood, city, district, state.
-2. Wikipedia: articles geotagged near the spot + the articles for each named level (street, neighbourhood, city ...).
-3. Wikidata: items within a few hundred metres with founding / dissolution dates.
-4. The LLM may ONLY arrange those fetched facts into eras. Every era carries a scope (how close the fact is to
+Pipeline (every source is public and global, so widening beyond the configured area needs no new code):
+1. OpenStreetMap / Nominatim reverse-geocode -> street, neighbourhood, city, district, state, plus any
+   historic/heritage/start_date tags on the address itself.
+2. Wikipedia in English, Hindi and Urdu: articles geotagged near the spot, the other-language versions of
+   those, and the article for each named level (street, neighbourhood, city ...).
+3. Wikidata: items within 800 m with founding / dissolution dates and any official heritage protection,
+   which is what surfaces an ASI Monument of National Importance.
+4. Overpass: everything OpenStreetMap records nearby as historic, heritage-listed or dated.
+5. The LLM may ONLY arrange those fetched facts into eras. Every era carries a scope (how close the fact is to
    the exact spot) and the ids of the sources it came from. Eras with no supporting source stay empty.
 """
 
@@ -25,7 +29,10 @@ import openai_voice
 logger = logging.getLogger(__name__)
 
 UA = "NVM-app/1.0 (street history lookup; contact: dev@nvm.app)"
-WIKI_LANGS = ("en", "hi")  # Hindi Wikipedia is often far richer for small towns and lanes
+# Hindi and Urdu Wikipedia both carry lanes and mohallas that English misses; for Shahjahanabad in
+# particular, Urdu is often the only encyclopaedia with an article at all.
+OTHER_LANGS = ("hi", "ur")
+LANG_NAMES = {"hi": "Hindi", "ur": "Urdu"}
 NOMINATIM = "https://nominatim.openstreetmap.org"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 
@@ -45,6 +52,14 @@ MAX_SOURCE_CHARS = 2600
 
 
 # ------------------------------ geometry ------------------------------------
+
+
+def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
 
 def offset_point(lat: float, lng: float, bearing: float, dist_m: float) -> tuple[float, float]:
@@ -76,13 +91,16 @@ async def _nominatim(client: httpx.AsyncClient, path: str, params: dict):
 
 async def reverse_geocode(lat: float, lng: float) -> Optional[dict]:
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
-        data = await _nominatim(c, "reverse", {"lat": lat, "lon": lng, "zoom": 17, "addressdetails": 1})
+        data = await _nominatim(c, "reverse", {"lat": lat, "lon": lng, "zoom": 17, "addressdetails": 1, "extratags": 1})
     return None if not data or "error" in data else data
 
 
-async def search_places(q: str, country: str = "in") -> list[dict]:
+async def search_places(q: str, country: str = "in", viewbox: Optional[str] = None) -> list[dict]:
+    params = {"q": q, "countrycodes": country, "limit": 8, "addressdetails": 1}
+    if viewbox:
+        params |= {"viewbox": viewbox, "bounded": 1}  # bounded=1 discards hits outside the box entirely
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
-        rows = await _nominatim(c, "search", {"q": q, "countrycodes": country, "limit": 8, "addressdetails": 1})
+        rows = await _nominatim(c, "search", params)
     out = []
     for r in rows:
         p = place_from_reverse(r)
@@ -133,6 +151,7 @@ def place_from_reverse(rev: dict) -> dict:
         "country": a.get("country"),
         "country_code": a.get("country_code"),
         "display_name": rev.get("display_name", ""),
+        "osm_tags": rev.get("extratags") or {},
         "osm_url": f"https://www.openstreetmap.org/{rev['osm_type']}/{rev['osm_id']}" if rev.get("osm_type") and rev.get("osm_id") else None,
     }
 
@@ -210,28 +229,77 @@ async def wiki_extract(client: httpx.AsyncClient, title: str, lang: str = "en") 
     return (pages[0]["title"], text) if len(text) > 80 else None
 
 
+WIKIDATA_RADIUS_KM = 0.8
+
+
 async def wikidata_nearby(client: httpx.AsyncClient, lat: float, lng: float) -> list[str]:
-    q = f"""SELECT ?itemLabel ?itemDescription ?dist ?inception ?dissolved WHERE {{
+    """Mapped items near the spot, with their dates and any official heritage protection.
+
+    The heritage designation (P1435) is what surfaces an ASI Monument of National Importance or a
+    state-protected monument, which for Delhi is the difference between "an old building" and a
+    dated, officially recorded one.
+    """
+    q = f"""SELECT ?itemLabel ?itemDescription ?dist ?inception ?dissolved ?heritageLabel WHERE {{
       SERVICE wikibase:around {{ ?item wdt:P625 ?loc . bd:serviceParam wikibase:center "Point({lng} {lat})"^^geo:wktLiteral .
-        bd:serviceParam wikibase:radius "0.4" . bd:serviceParam wikibase:distance ?dist . }}
+        bd:serviceParam wikibase:radius "{WIKIDATA_RADIUS_KM}" . bd:serviceParam wikibase:distance ?dist . }}
       OPTIONAL {{ ?item wdt:P571 ?inception }} OPTIONAL {{ ?item wdt:P576 ?dissolved }}
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }} }} ORDER BY ?dist LIMIT 25"""
-    r = await client.get(WIKIDATA_SPARQL, params={"query": q}, headers={"Accept": "application/sparql-results+json"}, timeout=15)
+      OPTIONAL {{ ?item wdt:P1435 ?heritage }}
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }} }} ORDER BY ?dist LIMIT 60"""
+    r = await client.get(WIKIDATA_SPARQL, params={"query": q}, headers={"Accept": "application/sparql-results+json"}, timeout=20)
     r.raise_for_status()
-    lines = []
+    rows: dict[str, str] = {}  # one line per item; a second heritage designation repeats the row
     for b in r.json()["results"]["bindings"]:
         label = b.get("itemLabel", {}).get("value", "")
-        if not label or re.fullmatch(r"Q\d+", label):
+        if not label or re.fullmatch(r"Q\d+", label) or label in rows:
             continue
         desc = b.get("itemDescription", {}).get("value", "")
         dist = round(float(b["dist"]["value"]) * 1000)
-        dates = []
+        bits = []
         if b.get("inception"):
-            dates.append(f"founded/built {b['inception']['value'][:4]}")
+            bits.append(f"founded/built {b['inception']['value'][:4]}")
         if b.get("dissolved"):
-            dates.append(f"ended {b['dissolved']['value'][:4]}")
-        lines.append(f"- {label} ({desc}) {dist} m away" + (f", {', '.join(dates)}" if dates else ""))
-    return lines
+            bits.append(f"ended {b['dissolved']['value'][:4]}")
+        heritage = b.get("heritageLabel", {}).get("value", "")
+        if heritage and not re.fullmatch(r"Q\d+", heritage):
+            bits.append(f"officially protected as: {heritage}")
+        rows[label] = f"- {label} ({desc}) {dist} m away" + (f", {', '.join(bits)}" if bits else "")
+    return list(rows.values())
+
+
+# Tags that carry history. Nominatim gives them for the matched address; Overpass finds everything
+# standing nearby, which is what catches an unnamed tomb or gateway in the middle of a lane.
+_OSM_TAG_LABELS = {
+    "historic": "historic",
+    "heritage": "heritage listing level",
+    "heritage:operator": "listed by",
+    "ref:asi": "ASI reference",
+    "start_date": "built",
+    "building": "building",
+    "inscription": "inscription",
+    "architect": "architect",
+    "religion": "religion",
+    "wikipedia": "wikipedia",
+}
+
+
+def _osm_feature_line(tags: dict, dist: Optional[int]) -> Optional[str]:
+    name = tags.get("name:en") or tags.get("name") or tags.get("name:hi") or tags.get("name:ur")
+    bits = []
+    for key, label in _OSM_TAG_LABELS.items():
+        val = tags.get(key)
+        if val and key != "building":
+            bits.append(f"{label} {val}")
+        elif val and key == "building" and val not in ("yes", "house"):
+            bits.append(f"{label} {val}")
+    if not bits:
+        return None
+    head = name or "unnamed feature"
+    where = f", {dist} m away" if dist is not None else ""
+    return f"- {head}: {'; '.join(bits)}{where}"
+
+
+# Heritage features nearby no longer come from Overpass at build time: they are imported into our own
+# database once (see osm_heritage.py) and passed into gather_sources by the caller.
 
 
 async def _safe(coro, label: str):
@@ -242,19 +310,23 @@ async def _safe(coro, label: str):
         return None
 
 
-async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
+async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
-        geo, geo_hi, wd, *level_titles = await asyncio.gather(
-            _safe(wiki_geosearch(c, lat, lng), "geosearch"),
-            _safe(wiki_geosearch(c, lat, lng, "hi"), "geosearch:hi"),
-            _safe(wikidata_nearby(c, lat, lng), "wikidata"),
+        fixed, *level_titles = await asyncio.gather(
+            asyncio.gather(
+                _safe(wiki_geosearch(c, lat, lng), "geosearch"),
+                _safe(wikidata_nearby(c, lat, lng), "wikidata"),
+                *[_safe(wiki_geosearch(c, lat, lng, lang), f"geosearch:{lang}") for lang in OTHER_LANGS],
+            ),
             *[
                 _safe(wiki_find(c, name, context if scope in ("spot", "street", "neighbourhood") else ("district" if scope == "district" else "")), f"find:{name}")
                 for scope, name in levels
             ],
         )
+        geo, wd = fixed[0], fixed[1]
+        geo_other = dict(zip(OTHER_LANGS, fixed[2:]))
         candidates: list[tuple[str, str]] = []
         spot_name = (levels[0][1] if levels and levels[0][0] in ("spot", "street") else "").lower()
         for title, dist in (geo or [])[:5]:
@@ -270,42 +342,58 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
                 unique.append((scope, title))
         unique = unique[:9]
 
-        # Hindi Wikipedia: the Hindi version of each English article, Hindi articles geotagged nearby, and a
-        # direct Hindi search for the narrow levels (street, locality, town) that English often lacks.
+        # Other-language Wikipedias: that language's version of each English article, plus its own
+        # geotagged articles nearby. For Hindi we also search by name, which works because an English
+        # place name usually survives into the Hindi text; in Urdu script it does not, so that search
+        # would match on nothing but noise and is skipped.
         narrow_levels = [(s, n) for s, n in levels if s in ("spot", "street", "neighbourhood", "city")]
-        hi_links, *hi_found = await asyncio.gather(
-            asyncio.gather(*[_safe(wiki_langlink(c, t, "hi"), f"langlink:{t}") for _, t in unique]),
-            *[_safe(hi_wiki_find(c, name, context if scope != "city" else place.get("state") or ""), f"hi-find:{name}") for scope, name in narrow_levels],
-        )
-        hi_candidates: list[tuple[str, str]] = []
-        for (scope, _), hi_title in zip(unique, hi_links):
-            if hi_title:
-                hi_candidates.append((scope, hi_title))
-        for title, _dist in (geo_hi or [])[:4]:
-            hi_candidates.append(("neighbourhood", title))
-        for (scope, _), title in zip(narrow_levels, hi_found):
-            if title:
-                hi_candidates.append((scope, title))
-        hi_seen, hi_unique = set(), []
-        for scope, title in hi_candidates:
-            if title not in hi_seen:
-                hi_seen.add(title)
-                hi_unique.append((scope, title))
-        hi_unique = hi_unique[:6]
 
-        extracts, hi_extracts = await asyncio.gather(
+        async def lang_candidates(lang: str) -> list[tuple[str, str]]:
+            links, *found = await asyncio.gather(
+                asyncio.gather(*[_safe(wiki_langlink(c, t, lang), f"langlink:{lang}:{t}") for _, t in unique]),
+                *(
+                    [_safe(hi_wiki_find(c, name, context if scope != "city" else place.get("state") or ""), f"hi-find:{name}") for scope, name in narrow_levels]
+                    if lang == "hi"
+                    else []
+                ),
+            )
+            out: list[tuple[str, str]] = []
+            for (scope, _), title in zip(unique, links):
+                if title:
+                    out.append((scope, title))
+            for title, _dist in (geo_other.get(lang) or [])[:4]:
+                out.append(("neighbourhood", title))
+            for (scope, _), title in zip(narrow_levels, found):
+                if title:
+                    out.append((scope, title))
+            seen_l, uniq_l = set(), []
+            for scope, title in out:
+                if title not in seen_l:
+                    seen_l.add(title)
+                    uniq_l.append((scope, title))
+            return uniq_l[:6]
+
+        per_lang = dict(zip(OTHER_LANGS, await asyncio.gather(*[lang_candidates(lang) for lang in OTHER_LANGS])))
+
+        extracts, *other_extracts = await asyncio.gather(
             asyncio.gather(*[_safe(wiki_extract(c, t), f"extract:{t}") for _, t in unique]),
-            asyncio.gather(*[_safe(wiki_extract(c, t, "hi"), f"extract:hi:{t}") for _, t in hi_unique]),
+            *[asyncio.gather(*[_safe(wiki_extract(c, t, lang), f"extract:{lang}:{t}") for _, t in per_lang[lang]]) for lang in OTHER_LANGS],
         )
 
     sources: list[dict] = []
-    for lang, items, exts in (("en", unique, extracts), ("hi", hi_unique, hi_extracts)):
+    for lang, items, exts in [("en", unique, extracts)] + [(lang, per_lang[lang], other_extracts[i]) for i, lang in enumerate(OTHER_LANGS)]:
         for (scope, _), ext in zip(items, exts):
             if ext:
                 title, text = ext
                 sources.append({"type": "wikipedia", "lang": lang, "title": title, "url": f"https://{lang}.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}", "scope": scope, "text": text})
     if wd:
-        sources.append({"type": "wikidata", "title": "Wikidata: mapped places within 400 m", "url": f"https://www.wikidata.org/wiki/Special:Nearby#/coord/{lat},{lng}", "scope": "spot", "text": "\n".join(wd)[:MAX_SOURCE_CHARS]})
+        sources.append({"type": "wikidata", "title": f"Wikidata: mapped places within {round(WIKIDATA_RADIUS_KM * 1000)} m", "url": f"https://www.wikidata.org/wiki/Special:Nearby#/coord/{lat},{lng}", "scope": "spot", "text": "\n".join(wd)[:MAX_SOURCE_CHARS]})
+    # "openstreetmap_heritage" is citable; plain "openstreetmap" stays the bare address, which never is.
+    if heritage_lines:
+        sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(heritage_lines)[:MAX_SOURCE_CHARS]})
+    osm_tags = _osm_feature_line(place.get("osm_tags") or {}, None)
+    if osm_tags:
+        sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: tags on this address itself", "url": place.get("osm_url") or "https://www.openstreetmap.org", "scope": "spot", "text": osm_tags})
     sources.append({"type": "openstreetmap", "title": "OpenStreetMap address", "url": place.get("osm_url") or "https://www.openstreetmap.org", "scope": "street", "text": place.get("display_name", "")})
     for i, s in enumerate(sources, start=1):
         s["id"] = i
@@ -317,8 +405,14 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
 SYSTEM = """You write the history of a precise spot for a camera app, using ONLY the numbered sources given.
 Rules:
 - Never use outside knowledge. Every sentence must be supported by the cited sources.
-- Some sources are in Hindi (from Hindi Wikipedia). Read them like any other source, translate the facts you
-  use into English, and cite them by number. Keep Indian names and terms as they are commonly written in English.
+- Some sources are in Hindi or Urdu (from Hindi and Urdu Wikipedia). Read them like any other source, translate
+  the facts you use into English, and cite them by number. Keep Indian names and terms as they are commonly
+  written in English.
+- The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
+  distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
+  precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
+  how far, and use its dates. Never state a distance or date it does not give, and do not list features for
+  their own sake - only where they tell you something about an era.
 - For each era give what is known about THIS spot. If sources only describe the wider area, write about the
   wider area and set scope accordingly: spot (this building/site), street, neighbourhood, city, region.
   Prefer the narrowest scope the sources support.
@@ -347,7 +441,11 @@ def _parse_json(raw: str) -> dict:
 
 
 async def compose_history(api_key: str, place: dict, sources: list[dict]) -> dict:
-    src_block = "\n\n".join(f"[{s['id']}] ({s['type']}{' in Hindi' if s.get('lang') == 'hi' else ''}, about the {s['scope']}) {s['title']}\n{s['text']}" for s in sources if s["type"] != "openstreetmap")
+    src_block = "\n\n".join(
+        f"[{s['id']}] ({s['type']}{' in ' + LANG_NAMES[s['lang']] if LANG_NAMES.get(s.get('lang')) else ''}, about the {s['scope']}) {s['title']}\n{s['text']}"
+        for s in sources
+        if s["type"] != "openstreetmap"
+    )
     prompt = f"Spot: {place['title']} — {place['display_name']}\n\nSOURCES:\n{src_block}"
     data = _parse_json(await openai_voice.generate_text(api_key, SYSTEM, prompt))
 

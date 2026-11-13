@@ -19,7 +19,7 @@ export type Place = {
 };
 
 export type EraEntry = { key: string; label: string; heading: string; text: string; scope: Scope; sources: number[] };
-export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
+export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "openstreetmap_heritage" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
 
 export type History = {
   key: string;
