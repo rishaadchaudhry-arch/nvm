@@ -26,6 +26,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
 import openai_voice
+import osm_heritage
 import photo_storage
 import share_card
 
@@ -130,6 +131,10 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
         IndexModel([("place_key", ASCENDING), ("status", ASCENDING)], name="place_status"),
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created"),
+    ],
+    "osm_heritage": [
+        IndexModel([("osm_id", ASCENDING)], name="osm_id", unique=True),
+        IndexModel([("location", "2dsphere")], name="location_2dsphere"),
     ],
     "admins": [IndexModel([("email", ASCENDING)], name="email", unique=True)],
     "photos": [IndexModel([("id", ASCENDING)], name="id", unique=True)],
@@ -438,7 +443,12 @@ _building: dict[str, asyncio.Task] = {}
 
 async def _build_history(key: str) -> dict:
     place_doc = await db.places.find_one({"key": key}, {"_id": 0})
-    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"])
+    try:
+        heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, place_doc["lat"], place_doc["lng"]))
+    except Exception as exc:  # never let a geo query sink a build; the other sources still stand
+        logger.warning("heritage lookup failed for %s: %s", key, exc)
+        heritage = []
+    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage)
     has_text_sources = any(s["type"] != "openstreetmap" for s in sources)
     body = he.empty_history()
     if has_text_sources:
@@ -692,6 +702,38 @@ async def rebuild_history_now(key: str, admin=Depends(require_admin)):
         _building[key] = task
         task.add_done_callback(lambda _t, k=key: _building.pop(k, None))
     return History(**await asyncio.shield(task))
+
+
+# ---- OpenStreetMap heritage import ----
+
+_heritage_import: dict = {"state": "never run"}
+_heritage_task: Optional[asyncio.Task] = None
+
+
+@api.post("/admin/osm-heritage/import")
+async def start_heritage_import(admin=Depends(require_admin)):
+    """Pull every historic and heritage-listed feature in the covered area into our own database.
+
+    Takes a few minutes and runs in the background: poll /admin/osm-heritage for progress. Re-running
+    is safe, and so is interrupting it, because each feature is upserted by its OpenStreetMap id.
+    """
+    global _heritage_task
+    if not SCOPE:
+        raise HTTPException(status_code=400, detail="Set SCOPE_BBOX before importing; importing the whole world is not supported.")
+    if _heritage_task and not _heritage_task.done():
+        return {"started": False, "reason": "already running", **_heritage_import}
+    _heritage_task = asyncio.create_task(osm_heritage.import_bbox(db, SCOPE, _heritage_import))
+    return {"started": True, "area": SCOPE_NAME, **_heritage_import}
+
+
+@api.get("/admin/osm-heritage")
+async def heritage_status(admin=Depends(require_admin)):
+    stored = await db.osm_heritage.count_documents({})
+    running = bool(_heritage_task and not _heritage_task.done())
+    failed = None
+    if _heritage_task and _heritage_task.done() and _heritage_task.exception():
+        failed = str(_heritage_task.exception())
+    return {"stored": stored, "running": running, "error": failed, **_heritage_import}
 
 
 @api.put("/admin/history/{key}", response_model=History)

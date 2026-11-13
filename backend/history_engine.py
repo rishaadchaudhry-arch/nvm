@@ -35,7 +35,6 @@ OTHER_LANGS = ("hi", "ur")
 LANG_NAMES = {"hi": "Hindi", "ur": "Urdu"}
 NOMINATIM = "https://nominatim.openstreetmap.org"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
-OVERPASS = "https://overpass-api.de/api/interpreter"
 
 ERAS = [
     ("pre1500", "Before 1500"),
@@ -299,31 +298,8 @@ def _osm_feature_line(tags: dict, dist: Optional[int]) -> Optional[str]:
     return f"- {head}: {'; '.join(bits)}{where}"
 
 
-async def osm_historic_nearby(client: httpx.AsyncClient, lat: float, lng: float, radius: int = 350) -> list[str]:
-    """Everything OpenStreetMap records as historic, heritage-listed or dated, within a short walk."""
-    q = (
-        f"[out:json][timeout:25];("
-        f'nwr(around:{radius},{lat},{lng})["historic"];'
-        f'nwr(around:{radius},{lat},{lng})["heritage"];'
-        f'nwr(around:{radius},{lat},{lng})["start_date"];'
-        f");out center tags 80;"
-    )
-    r = await client.post(OVERPASS, data={"data": q}, timeout=35)
-    r.raise_for_status()
-    seen, lines = set(), []
-    for el in r.json().get("elements", []):
-        tags = el.get("tags") or {}
-        centre = el if el.get("lat") is not None else el.get("center") or {}
-        dist = None
-        if centre.get("lat") is not None and centre.get("lon") is not None:
-            dist = round(distance_m(lat, lng, float(centre["lat"]), float(centre["lon"])))
-        line = _osm_feature_line(tags, dist)
-        key = (tags.get("name") or "") + (tags.get("historic") or "") + str(dist)
-        if line and key not in seen:
-            seen.add(key)
-            lines.append((dist if dist is not None else 9999, line))
-    lines.sort()
-    return [l for _, l in lines[:40]]
+# Heritage features nearby no longer come from Overpass at build time: they are imported into our own
+# database once (see osm_heritage.py) and passed into gather_sources by the caller.
 
 
 async def _safe(coro, label: str):
@@ -334,7 +310,7 @@ async def _safe(coro, label: str):
         return None
 
 
-async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
+async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
@@ -342,7 +318,6 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
             asyncio.gather(
                 _safe(wiki_geosearch(c, lat, lng), "geosearch"),
                 _safe(wikidata_nearby(c, lat, lng), "wikidata"),
-                _safe(osm_historic_nearby(c, lat, lng), "osm-historic"),
                 *[_safe(wiki_geosearch(c, lat, lng, lang), f"geosearch:{lang}") for lang in OTHER_LANGS],
             ),
             *[
@@ -350,8 +325,8 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
                 for scope, name in levels
             ],
         )
-        geo, wd, osm_hist = fixed[0], fixed[1], fixed[2]
-        geo_other = dict(zip(OTHER_LANGS, fixed[3:]))
+        geo, wd = fixed[0], fixed[1]
+        geo_other = dict(zip(OTHER_LANGS, fixed[2:]))
         candidates: list[tuple[str, str]] = []
         spot_name = (levels[0][1] if levels and levels[0][0] in ("spot", "street") else "").lower()
         for title, dist in (geo or [])[:5]:
@@ -414,8 +389,8 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
     if wd:
         sources.append({"type": "wikidata", "title": f"Wikidata: mapped places within {round(WIKIDATA_RADIUS_KM * 1000)} m", "url": f"https://www.wikidata.org/wiki/Special:Nearby#/coord/{lat},{lng}", "scope": "spot", "text": "\n".join(wd)[:MAX_SOURCE_CHARS]})
     # "openstreetmap_heritage" is citable; plain "openstreetmap" stays the bare address, which never is.
-    if osm_hist:
-        sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(osm_hist)[:MAX_SOURCE_CHARS]})
+    if heritage_lines:
+        sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(heritage_lines)[:MAX_SOURCE_CHARS]})
     osm_tags = _osm_feature_line(place.get("osm_tags") or {}, None)
     if osm_tags:
         sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: tags on this address itself", "url": place.get("osm_url") or "https://www.openstreetmap.org", "scope": "spot", "text": osm_tags})
