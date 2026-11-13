@@ -736,6 +736,28 @@ async def heritage_status(admin=Depends(require_admin)):
     return {"stored": stored, "running": running, "error": failed, **_heritage_import}
 
 
+@api.get("/admin/sources/{key}")
+async def preview_sources(key: str, admin=Depends(require_admin)):
+    """Everything the app has gathered about a place, before any model touches it.
+
+    This is the honest answer to "why does this street's history say so little": if the sources here
+    are thin, no amount of prompting will fix it, and the gap has to be filled with real data.
+    """
+    place_doc = await db.places.find_one({"key": key}, {"_id": 0})
+    if not place_doc:
+        raise HTTPException(status_code=404, detail="Unknown place")
+    heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, place_doc["lat"], place_doc["lng"]))
+    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage)
+    return {
+        "place": {k: place_doc.get(k) for k in ("key", "title", "subtitle", "lat", "lng")},
+        "heritage_features_nearby": len(heritage),
+        "sources": [
+            {**{k: s.get(k) for k in ("id", "type", "lang", "title", "url", "scope")}, "chars": len(s.get("text", "")), "text": s.get("text", "")}
+            for s in sources
+        ],
+    }
+
+
 @api.put("/admin/history/{key}", response_model=History)
 async def edit_history(key: str, body: HistoryEdit, admin=Depends(require_admin)):
     """Hand-correct a street's history. Every era that has text must still cite at least one source."""
