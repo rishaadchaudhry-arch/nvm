@@ -19,12 +19,20 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Several hosts run the same API. The main one is the most often overloaded, so it goes last.
+# Several public servers run the same API, and which of them answers varies by day and by network.
+# Measured from Delhi on 2026-11-13: kumi.systems and private.coffee did not respond at all,
+# overpass-api.de returned HTTP 502 or took 50 s, and the mail.ru mirror answered in 17 s. They are
+# tried in order, so reorder this list if the picture changes; every one of them is a read-only
+# mirror of the same public OpenStreetMap data.
 OVERPASS_HOSTS = [
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
 ]
+
+# Fail fast on a host that is not answering; be patient once one has accepted the query.
+TIMEOUT = httpx.Timeout(connect=8.0, read=150.0, write=15.0, pool=15.0)
+ATTEMPTS = 3  # passes over the whole host list before a tile is given up on
 UA = "NVM-app/1.0 (street history lookup; contact: dev@nvm.app)"
 
 # Tags that say something about a feature's history. Anything carrying one of these is worth keeping.
@@ -61,17 +69,22 @@ def _query(tile: tuple[float, float, float, float]) -> str:
 
 
 async def fetch_tile(client: httpx.AsyncClient, tile: tuple[float, float, float, float]) -> list[dict]:
-    """One tile, trying each host in turn. Raises only if every host failed."""
+    """One tile, trying each host in turn, a few times over. Raises only once everything has failed.
+
+    These servers are free, shared and frequently overloaded, so a refusal says nothing about the
+    query: back off and come round again rather than giving up on the tile.
+    """
     last: Optional[Exception] = None
-    for host in OVERPASS_HOSTS:
-        try:
-            r = await client.post(host, data={"data": _query(tile)}, timeout=120)
-            r.raise_for_status()
-            return r.json().get("elements", [])
-        except Exception as exc:
-            last = exc
-            logger.warning("overpass tile %s failed on %s: %s", tile, host.split("/")[2], exc)
-            await asyncio.sleep(2)
+    for attempt in range(1, ATTEMPTS + 1):
+        for host in OVERPASS_HOSTS:
+            try:
+                r = await client.post(host, data={"data": _query(tile)}, timeout=TIMEOUT)
+                r.raise_for_status()
+                return r.json().get("elements", [])
+            except Exception as exc:
+                last = exc
+                logger.warning("overpass tile %s, attempt %s on %s: %s", tile, attempt, host.split("/")[2], exc)
+        await asyncio.sleep(5 * attempt)
     raise RuntimeError(f"every Overpass host failed for tile {tile}: {last}")
 
 
@@ -100,7 +113,7 @@ async def import_bbox(db, bbox: tuple[float, float, float, float], progress: Opt
     if progress is not None:
         progress.update({"state": "running", "tiles_total": len(tiles), "tiles_done": 0, "features": 0, "failed_tiles": 0})
     stored, failed = 0, 0
-    async with httpx.AsyncClient(headers={"User-Agent": UA}) as client:
+    async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=TIMEOUT) as client:
         for i, tile in enumerate(tiles, start=1):
             try:
                 elements = await fetch_tile(client, tile)
