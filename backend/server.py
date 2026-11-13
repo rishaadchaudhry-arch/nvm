@@ -48,6 +48,37 @@ ADMIN_PASSWORD = _required("ADMIN_PASSWORD")
 JWT_SECRET = _required("JWT_SECRET")
 if len(JWT_SECRET) < 32:
     raise RuntimeError("JWT_SECRET is too short to sign tokens safely. Use at least 32 characters: python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
+# Which patch of the world the app covers. Delhi NCT by default: the sources that make a street
+# history worth reading (ASI listings, Shahjahanabad gazetteers, Urdu Wikipedia) are deep here and
+# thin elsewhere, so the app is honest about its scope rather than pretending to cover India.
+# Set SCOPE_BBOX to "" to lift the limit, or to "minLng,minLat,maxLng,maxLat" for somewhere else.
+SCOPE_NAME = os.environ.get("SCOPE_NAME", "Delhi")
+SCOPE_BBOX = os.environ.get("SCOPE_BBOX", "76.8382,28.4041,77.3485,28.8835")
+# The box is a rectangle, so its corners catch Gurugram, Noida and Faridabad. The state the map
+# actually reports is the exact test; the box only saves a lookup for points obviously far away.
+SCOPE_STATE = os.environ.get("SCOPE_STATE", SCOPE_NAME)
+
+
+def _parse_bbox(raw: str) -> Optional[tuple[float, float, float, float]]:
+    try:
+        min_lng, min_lat, max_lng, max_lat = (float(x) for x in raw.split(","))
+    except (ValueError, AttributeError):
+        if raw.strip():
+            raise RuntimeError(f'SCOPE_BBOX must be "minLng,minLat,maxLng,maxLat" or empty, not {raw!r}')
+        return None
+    return min_lng, min_lat, max_lng, max_lat
+
+
+SCOPE = _parse_bbox(SCOPE_BBOX)
+
+
+def in_scope(lat: float, lng: float) -> bool:
+    if not SCOPE:
+        return True
+    min_lng, min_lat, max_lng, max_lat = SCOPE
+    return min_lat <= lat <= max_lat and min_lng <= lng <= max_lng
+
+
 UPVOTE_THRESHOLD = int(os.environ.get("UPVOTE_THRESHOLD") or 5)
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS") or 0)
 BUILDS_PER_IP_PER_HOUR = int(os.environ.get("BUILDS_PER_IP_PER_HOUR") or 40)
@@ -375,6 +406,8 @@ async def get_place(key: str) -> Place:
 
 async def resolve_place(lat: float, lng: float) -> Place:
     """Reverse-geocode with a ~11 m cache cell so a crowd on one street costs one lookup."""
+    if not in_scope(lat, lng):
+        raise HTTPException(status_code=404, detail=f"NVM only covers {SCOPE_NAME} for now. Point it at a street in {SCOPE_NAME}, or search for one.")
     cell = f"{round(lat, 4)},{round(lng, 4)}"
     cached = await db.geocode_cache.find_one({"cell": cell}, {"_id": 0})
     if cached:
@@ -387,12 +420,15 @@ async def resolve_place(lat: float, lng: float) -> Place:
     if not rev:
         raise HTTPException(status_code=404, detail="No mapped place here")
     p = he.place_from_reverse(rev)
+    if SCOPE and SCOPE_STATE and SCOPE_STATE.lower() not in (p.get("state") or "").lower():
+        raise HTTPException(status_code=404, detail=f"That's in {p.get('state') or 'another state'}. NVM only covers {SCOPE_NAME} for now.")
     existing = await db.places.find_one({"key": p["key"]}, {"_id": 0})
     if existing:
         place = Place(**existing)
     else:
         place = Place(**{k: p[k] for k in ("key", "title", "subtitle", "city", "state", "country", "display_name", "osm_url")}, lat=lat, lng=lng)
-        await db.places.update_one({"key": place.key}, {"$setOnInsert": {**place.model_dump(), "levels": p["levels"]}}, upsert=True)
+        # levels and osm_tags are kept on the record but off the API model: they feed history building.
+        await db.places.update_one({"key": place.key}, {"$setOnInsert": {**place.model_dump(), "levels": p["levels"], "osm_tags": p.get("osm_tags") or {}}}, upsert=True)
     await db.geocode_cache.update_one({"cell": cell}, {"$set": {"cell": cell, "key": place.key}}, upsert=True)
     return place
 
@@ -517,7 +553,7 @@ async def place_detail(key: str):
 @api.get("/search")
 async def search(q: str = Query(..., min_length=2, max_length=120)):
     try:
-        return await he.search_places(q)
+        return await he.search_places(q, viewbox=SCOPE_BBOX or None)
     except Exception as exc:
         logger.error("search failed: %s", exc)
         raise HTTPException(status_code=502, detail="Search is unavailable right now. Try again.") from exc
@@ -599,7 +635,7 @@ async def upvote(tid: str, body: VoteIn, request: Request):
 
 @api.get("/config")
 async def config():
-    return {"upvote_threshold": UPVOTE_THRESHOLD, "story_radius_m": STORY_RADIUS_M}
+    return {"upvote_threshold": UPVOTE_THRESHOLD, "story_radius_m": STORY_RADIUS_M, "scope_name": SCOPE_NAME if SCOPE else None, "scope_bbox": list(SCOPE) if SCOPE else None}
 
 
 # ---- Admin ----

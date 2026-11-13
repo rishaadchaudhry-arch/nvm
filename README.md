@@ -2,8 +2,14 @@
 
 Point your camera at any street and read what was there — 1500s, 1600s, 1700s,
 up to today. An Expo app over a FastAPI backend that builds each street's
-history from open data (OpenStreetMap, English and Hindi Wikipedia, Wikidata),
-arranged by an OpenAI model that may only use the sources it is given.
+history from open data (OpenStreetMap and Overpass, English, Hindi and Urdu
+Wikipedia, Wikidata), arranged by an OpenAI model that may only use the sources
+it is given.
+
+**Coverage is Delhi NCT.** Searches are confined to it and a point outside it is
+refused, because the sources that make a street history worth reading are deep
+for Delhi and thin elsewhere. `SCOPE_BBOX`, `SCOPE_NAME` and `SCOPE_STATE` in
+`backend/.env` move or lift that boundary; no code changes are needed.
 
 ```
 backend/    FastAPI + motor (async MongoDB) + Pydantic v2
