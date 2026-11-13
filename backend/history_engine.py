@@ -405,8 +405,14 @@ async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Op
 SYSTEM = """You write the history of a precise spot for a camera app, using ONLY the numbered sources given.
 Rules:
 - Never use outside knowledge. Every sentence must be supported by the cited sources.
-- Some sources are in Hindi (from Hindi Wikipedia). Read them like any other source, translate the facts you
-  use into English, and cite them by number. Keep Indian names and terms as they are commonly written in English.
+- Some sources are in Hindi or Urdu (from Hindi and Urdu Wikipedia). Read them like any other source, translate
+  the facts you use into English, and cite them by number. Keep Indian names and terms as they are commonly
+  written in English.
+- The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
+  distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
+  precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
+  how far, and use its dates. Never state a distance or date it does not give, and do not list features for
+  their own sake - only where they tell you something about an era.
 - For each era give what is known about THIS spot. If sources only describe the wider area, write about the
   wider area and set scope accordingly: spot (this building/site), street, neighbourhood, city, region.
   Prefer the narrowest scope the sources support.
