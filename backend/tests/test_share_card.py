@@ -1,13 +1,12 @@
 # Share card feature: /api/history/{key}/card-facts and /api/history/{key}/card.png
 import io
-import os
 import time
 
 import pytest
 import requests
 from PIL import Image, ImageStat
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
+from nvm_test_env import BASE_URL
 KEY = "nai-sarak-1017b307"
 MISSING = "nope-00000000"
 

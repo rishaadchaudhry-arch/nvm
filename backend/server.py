@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import uuid
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, List, Literal, Optional
@@ -32,16 +32,25 @@ import share_card
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")  # only needed to migrate old photos out of Emergent storage
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]  # history writing + narration
-ADMIN_EMAIL = os.environ["ADMIN_EMAIL"].lower()
-ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
-JWT_SECRET = os.environ["JWT_SECRET"]
-UPVOTE_THRESHOLD = int(os.environ["UPVOTE_THRESHOLD"])
-TRUSTED_PROXY_HOPS = int(os.environ["TRUSTED_PROXY_HOPS"])
-BUILDS_PER_IP_PER_HOUR = int(os.environ["BUILDS_PER_IP_PER_HOUR"])
+def _required(name: str) -> str:
+    """Fail at startup with a readable message instead of a bare KeyError traceback."""
+    value = (os.environ.get(name) or "").strip()
+    if not value:
+        raise RuntimeError(f"{name} is not set. Copy backend/.env.example to backend/.env and fill it in.")
+    return value
+
+
+MONGO_URL = _required("MONGO_URL")
+DB_NAME = _required("DB_NAME")
+OPENAI_API_KEY = _required("OPENAI_API_KEY")  # history writing + narration
+ADMIN_EMAIL = _required("ADMIN_EMAIL").lower()
+ADMIN_PASSWORD = _required("ADMIN_PASSWORD")
+JWT_SECRET = _required("JWT_SECRET")
+if len(JWT_SECRET) < 32:
+    raise RuntimeError("JWT_SECRET is too short to sign tokens safely. Use at least 32 characters: python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
+UPVOTE_THRESHOLD = int(os.environ.get("UPVOTE_THRESHOLD") or 5)
+TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS") or 0)
+BUILDS_PER_IP_PER_HOUR = int(os.environ.get("BUILDS_PER_IP_PER_HOUR") or 40)
 JWT_ALG = "HS256"
 TOKEN_MINUTES = 60 * 12
 FACING_DISTANCE_M = 35  # how far ahead of the phone we look when the camera points somewhere
@@ -416,7 +425,22 @@ async def _build_history(key: str) -> dict:
 
 # ------------------------------ APP / ROUTES --------------------------------
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Index building runs in the background; the admin has to exist before the first login."""
+    index_task = asyncio.create_task(ensure_indexes())
+    await seed_admin()
+    try:
+        yield
+    finally:
+        index_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await index_task
+        client.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/health", include_in_schema=False)
@@ -781,26 +805,6 @@ async def store_photo(account_id: str, photo: UploadFile) -> str:
         raise HTTPException(status_code=502, detail="Couldn't store the photo right now") from exc
 
 
-async def migrate_photos_from_emergent() -> None:
-    """One-off: copy any photo still held in Emergent Object Storage into the active store. Safe to re-run."""
-    pending = await db.local_accounts.find({"photo_path": {"$regex": "^nvm/"}}, {"_id": 0, "id": 1, "photo_path": 1}).to_list(1000)
-    if not pending:
-        return
-    import object_storage as legacy
-
-    moved = 0
-    for doc in pending:
-        try:
-            data, _ = await legacy.get_object(EMERGENT_LLM_KEY, doc["photo_path"])
-            prepared, prepared_type = await asyncio.to_thread(photo_storage.prepare_image, data)
-            new_path = await photos.put(prepared, prepared_type)
-            await db.local_accounts.update_one({"id": doc["id"], "photo_path": doc["photo_path"]}, {"$set": {"photo_path": new_path, "legacy_photo_path": doc["photo_path"]}})
-            moved += 1
-        except Exception as exc:
-            logger.error("photo migration failed for %s: %s", doc["id"], exc)
-    logger.info("photo migration: moved %s of %s photos into %s", moved, len(pending), photos.scheme)
-
-
 @api.post("/admin/local-accounts/{aid}/photo", response_model=LocalAccount)
 async def set_local_account_photo(aid: str, photo: UploadFile = File(...), admin=Depends(require_admin)):
     """Attach (or replace) the photo of an existing local account, e.g. one that came in through a CSV."""
@@ -811,6 +815,10 @@ async def set_local_account_photo(aid: str, photo: UploadFile = File(...), admin
     # A fresh ?v= each time so a replaced photo is never served from an old cache entry.
     photo_url = f"/api/local-accounts/{aid}/photo?v={path.split(':', 1)[-1][:8]}"
     await db.local_accounts.update_one({"id": aid}, {"$set": {"photo_path": path, "photo_url": photo_url}})
+    old_path = doc.get("photo_path")
+    if old_path and old_path != path:
+        with suppress(Exception):  # the replacement is already saved; an orphan left behind is not worth a 500
+            await photos.delete(old_path)
     return LocalAccount(**{**doc, "photo_url": photo_url})
 
 
@@ -1000,18 +1008,3 @@ app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=False, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-
-@app.on_event("startup")
-async def startup():
-    app.state.index_task = asyncio.create_task(ensure_indexes())
-    await seed_admin()
-    app.state.photo_migration = asyncio.create_task(migrate_photos_from_emergent())
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    app.state.index_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await app.state.index_task
-    client.close()

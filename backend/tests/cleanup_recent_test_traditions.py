@@ -2,12 +2,13 @@
 import asyncio
 import os
 import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-load_dotenv("/app/backend/.env")
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 async def main():

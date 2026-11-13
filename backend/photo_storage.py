@@ -30,6 +30,9 @@ class PhotoStore(Protocol):
     async def get(self, path: str) -> tuple[bytes, str]:
         """Return (bytes, content_type). Raise KeyError if the path is unknown."""
 
+    async def delete(self, path: str) -> None:
+        """Remove a stored photo. Never raises for a path that is already gone."""
+
 
 def prepare_image(data: bytes) -> tuple[bytes, str]:
     """Normalise an upload: honour EXIF rotation, flatten to RGB, cap at 1200 px, compress to JPEG."""
@@ -62,6 +65,11 @@ class MongoPhotoStore:
         if not doc:
             raise KeyError(path)
         return bytes(doc["data"]), doc["content_type"]
+
+    async def delete(self, path: str) -> None:
+        scheme, _, pid = path.partition(":")
+        if scheme == self.scheme and pid:
+            await self.col.delete_one({"id": pid})
 
 
 def make_store(db: AsyncIOMotorDatabase) -> PhotoStore:

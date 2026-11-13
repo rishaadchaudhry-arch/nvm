@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Feather from "@react-native-vector-icons/feather";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 
 import { api, SCOPE_LABEL, sourceLabel, type History, type HistoryEdit, type Scope, type Source } from "@/src/api";
@@ -61,9 +61,15 @@ function Editor({ placeKey }: { placeKey: string }) {
     setNewSources([]);
     setDirty(false);
   };
-  useEffect(() => {
-    if (history.data) load(history.data);
-  }, [history.data]);
+
+  // Fill the form from a *new* version of the history only. Keying on the object itself would reset
+  // the admin's unsaved edits every time react-query handed back a fresh copy of the same record.
+  const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
+  const version = history.data ? `${history.data.key}|${history.data.edited_at ?? history.data.built_at}` : null;
+  if (history.data && version !== loadedVersion) {
+    setLoadedVersion(version);
+    load(history.data);
+  }
 
   const existing: Source[] = (history.data?.sources ?? []).filter((src) => src.type !== "openstreetmap");
   const nextId = Math.max(0, ...(history.data?.sources ?? []).map((src) => src.id)) + 1;

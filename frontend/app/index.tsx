@@ -91,6 +91,7 @@ export default function CameraHome() {
   // Without a compass (web preview) you drag to turn.
   const dragStart = useRef(0);
   const manualRef = useRef(0);
+  // eslint-disable-next-line react-hooks/refs -- dragStart/manualRef are read inside gesture callbacks, never during render
   const [pan] = useState(() =>
     PanResponder.create({
       onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 8,

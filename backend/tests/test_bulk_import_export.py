@@ -8,9 +8,7 @@ import datetime as dt
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
-ADMIN_EMAIL = "admin@yatra.app"
-ADMIN_PW = "Yatra-a20d244dfc16"
+from nvm_test_env import ADMIN_EMAIL, ADMIN_PW, BASE_URL
 PLACE = "lajpat-nagar-ii-1a9b6fe7"
 EXPORT_COLS = "type,id,place_key,place_title,era,era_label,title,body,told_by,village,collected_on,author,status,verified_by,upvotes,photo_url,added_by,created_at".split(",")
 
@@ -189,9 +187,12 @@ class TestExportStories:
             ids[st] = tid
         yield ids
         import asyncio
+        from pathlib import Path
+
         from dotenv import load_dotenv
         from motor.motor_asyncio import AsyncIOMotorClient
-        load_dotenv("/app/backend/.env")
+
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
         async def rm():
             db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
