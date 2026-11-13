@@ -155,6 +155,21 @@ async def nearby(db, lat: float, lng: float, radius_m: int = 350, limit: int = 4
     return [doc async for doc in cursor]
 
 
+# A nameless thing tagged only "historic=yes" says nothing a reader could use, and a list of them
+# crowds out the entries that do. Keep a feature only if it can be named, dated, or described.
+_VAGUE = {"yes", "unknown", "building", "ruins"}
+
+
+def _tells_us_something(name: Optional[str], tags: dict, bits: list) -> bool:
+    if not bits:
+        return False
+    if name:
+        return True
+    # Unnamed is fine when the feature itself is specific (a city wall, a stepwell) or carries a date.
+    specific = (tags.get("historic") or "").lower() not in _VAGUE and bool(tags.get("historic"))
+    return specific or bool(tags.get("start_date") or tags.get("inscription") or tags.get("description") or tags.get("ref:asi"))
+
+
 def as_lines(features: Iterable[dict]) -> list[str]:
     """One readable line per feature, for the model to cite."""
     labels = {
@@ -177,8 +192,8 @@ def as_lines(features: Iterable[dict]) -> list[str]:
         bits = [f"{label} {tags[key]}" for key, label in labels.items() if tags.get(key)]
         if tags.get("old_name"):
             bits.append(f"formerly called {tags['old_name']}")
-        if not bits:
+        if not _tells_us_something(name, tags, bits):
             continue
         dist = f", {round(f['dist_m'])} m away" if f.get("dist_m") is not None else ""
-        out.append(f"- {name or 'unnamed feature'}: {'; '.join(bits)}{dist}")
+        out.append(f"- {name or 'an unnamed structure'}: {'; '.join(bits)}{dist}")
     return out

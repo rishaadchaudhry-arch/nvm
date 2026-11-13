@@ -26,6 +26,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
 import openai_voice
+import gazetteer
 import osm_heritage
 import photo_storage
 import share_card
@@ -131,6 +132,10 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
         IndexModel([("place_key", ASCENDING), ("status", ASCENDING)], name="place_status"),
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created"),
+    ],
+    "gazetteer": [
+        IndexModel([("volume", ASCENDING), ("number", ASCENDING), ("locality", ASCENDING)], name="vol_no_locality", unique=True),
+        IndexModel([("location", "2dsphere")], name="location_2dsphere"),
     ],
     "osm_heritage": [
         IndexModel([("osm_id", ASCENDING)], name="osm_id", unique=True),
@@ -443,12 +448,18 @@ _building: dict[str, asyncio.Task] = {}
 
 async def _build_history(key: str) -> dict:
     place_doc = await db.places.find_one({"key": key}, {"_id": 0})
+    lat, lng = place_doc["lat"], place_doc["lng"]
     try:
-        heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, place_doc["lat"], place_doc["lng"]))
+        heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, lat, lng))
     except Exception as exc:  # never let a geo query sink a build; the other sources still stand
         logger.warning("heritage lookup failed for %s: %s", key, exc)
         heritage = []
-    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage)
+    try:
+        survey = gazetteer.as_lines(await gazetteer.nearby(db, lat, lng))
+    except Exception as exc:
+        logger.warning("gazetteer lookup failed for %s: %s", key, exc)
+        survey = []
+    sources = await he.gather_sources(place_doc, lat, lng, heritage, survey)
     has_text_sources = any(s["type"] != "openstreetmap" for s in sources)
     body = he.empty_history()
     if has_text_sources:
@@ -747,7 +758,8 @@ async def preview_sources(key: str, admin=Depends(require_admin)):
     if not place_doc:
         raise HTTPException(status_code=404, detail="Unknown place")
     heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, place_doc["lat"], place_doc["lng"]))
-    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage)
+    survey = gazetteer.as_lines(await gazetteer.nearby(db, place_doc["lat"], place_doc["lng"]))
+    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage, survey)
     return {
         "place": {k: place_doc.get(k) for k in ("key", "title", "subtitle", "lat", "lng")},
         "heritage_features_nearby": len(heritage),
@@ -756,6 +768,48 @@ async def preview_sources(key: str, admin=Depends(require_admin)):
             for s in sources
         ],
     }
+
+
+# ---- Zafar Hasan gazetteer import ----
+
+_gazetteer_import: dict = {"state": "never run"}
+_gazetteer_task: Optional[asyncio.Task] = None
+
+
+@api.post("/admin/gazetteer/import")
+async def start_gazetteer_import(
+    volumes: str = Query("1", description="Comma-separated volume numbers, 1-4"),
+    dry_run: bool = Query(False, description="Parse and report without storing anything"),
+    admin=Depends(require_admin),
+):
+    """Import Zafar Hasan's survey of Delhi's monuments from the Internet Archive.
+
+    Runs in the background: poll /admin/gazetteer for progress. Placing lanes on the map is limited
+    to one geocode a second, so a volume takes a few minutes.
+    """
+    global _gazetteer_task
+    try:
+        wanted = [int(v) for v in volumes.split(",") if v.strip()]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="volumes must be numbers, for example 1,2")
+    unknown = [v for v in wanted if v not in gazetteer.VOLUMES]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"No such volume: {unknown}. There are four.")
+    if _gazetteer_task and not _gazetteer_task.done():
+        return {"started": False, "reason": "already running", **_gazetteer_import}
+    _gazetteer_import.clear()
+    _gazetteer_task = asyncio.create_task(gazetteer.import_volumes(db, wanted, SCOPE_BBOX or None, _gazetteer_import, dry_run))
+    return {"started": True, "volumes": wanted, "dry_run": dry_run}
+
+
+@api.get("/admin/gazetteer")
+async def gazetteer_status(admin=Depends(require_admin)):
+    stored = await db.gazetteer.count_documents({})
+    running = bool(_gazetteer_task and not _gazetteer_task.done())
+    failed = None
+    if _gazetteer_task and _gazetteer_task.done() and _gazetteer_task.exception():
+        failed = str(_gazetteer_task.exception())
+    return {"stored": stored, "running": running, "error": failed, **_gazetteer_import}
 
 
 @api.put("/admin/history/{key}", response_model=History)

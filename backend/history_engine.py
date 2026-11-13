@@ -310,7 +310,7 @@ async def _safe(coro, label: str):
         return None
 
 
-async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None) -> list[dict]:
+async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None, survey_lines: Optional[list[str]] = None) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
@@ -389,6 +389,14 @@ async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Op
     if wd:
         sources.append({"type": "wikidata", "title": f"Wikidata: mapped places within {round(WIKIDATA_RADIUS_KM * 1000)} m", "url": f"https://www.wikidata.org/wiki/Special:Nearby#/coord/{lat},{lng}", "scope": "spot", "text": "\n".join(wd)[:MAX_SOURCE_CHARS]})
     # "openstreetmap_heritage" is citable; plain "openstreetmap" stays the bare address, which never is.
+    if survey_lines:
+        sources.append({
+            "type": "gazetteer",
+            "title": "Zafar Hasan, List of Muhammadan and Hindu Monuments (1916-1922)",
+            "url": "https://archive.org/details/in.gov.ignca.22805",
+            "scope": "street",
+            "text": "\n".join(survey_lines)[:MAX_SOURCE_CHARS * 2],
+        })
     if heritage_lines:
         sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(heritage_lines)[:MAX_SOURCE_CHARS]})
     osm_tags = _osm_feature_line(place.get("osm_tags") or {}, None)
@@ -408,6 +416,11 @@ Rules:
 - Some sources are in Hindi or Urdu (from Hindi and Urdu Wikipedia). Read them like any other source, translate
   the facts you use into English, and cite them by number. Keep Indian names and terms as they are commonly
   written in English.
+- The gazetteer source is the Archaeological Survey's 1916-1922 walk through Delhi, which recorded monuments
+  lane by lane. It is the richest thing you have about ordinary streets, so prefer it when it speaks. Two
+  cautions: it records the lane a monument stood in, not an exact position, so write "in <lane>" rather than
+  implying it stands on this spot; and it describes Delhi as it was then, so say what it recorded and when
+  ("in 1916 the survey recorded ..."), never that something is still standing today.
 - The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
   distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
   precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
