@@ -83,6 +83,12 @@ android-sdk/
 .env
 .env.*
 *.env
+!.env.example
+!**/.env.example
 credentials.json
 *.key
 .credentials
+
+# Local caches and virtualenvs
+frontend/.metro-cache/
+backend/.venv/

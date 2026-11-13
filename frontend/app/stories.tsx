@@ -28,7 +28,7 @@ export default function Stories() {
         data={pending.data ?? []}
         keyExtractor={(t) => t.id}
         contentContainerStyle={{ paddingHorizontal: spacing.xl, paddingBottom: insets.bottom + spacing.xl }}
-        refreshControl={<RefreshControl refreshing={pending.isRefetching} onRefresh={() => pending.refetch()} tintColor={colors.brandPrimary} />}
+        refreshControl={<RefreshControl refreshing={pending.isRefetching} onRefresh={() => void pending.refetch()} tintColor={colors.brandPrimary} />}
         ListHeaderComponent={
           <View style={{ marginBottom: spacing.lg }}>
             <Text style={s.kicker}>COMMUNITY</Text>

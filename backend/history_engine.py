@@ -244,6 +244,7 @@ async def _safe(coro, label: str):
 
 async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
+    levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
         geo, geo_hi, wd, *level_titles = await asyncio.gather(
             _safe(wiki_geosearch(c, lat, lng), "geosearch"),
@@ -251,15 +252,15 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
             _safe(wikidata_nearby(c, lat, lng), "wikidata"),
             *[
                 _safe(wiki_find(c, name, context if scope in ("spot", "street", "neighbourhood") else ("district" if scope == "district" else "")), f"find:{name}")
-                for scope, name in place["levels"]
+                for scope, name in levels
             ],
         )
         candidates: list[tuple[str, str]] = []
-        spot_name = (place["levels"][0][1] if place["levels"] and place["levels"][0][0] in ("spot", "street") else "").lower()
+        spot_name = (levels[0][1] if levels and levels[0][0] in ("spot", "street") else "").lower()
         for title, dist in (geo or [])[:5]:
             # Only an article named after this very spot is "about this spot"; other nearby articles are context.
             candidates.append(("spot" if spot_name and spot_name in title.lower() else "neighbourhood", title))
-        for (scope, _), title in zip(place["levels"], level_titles):
+        for (scope, _), title in zip(levels, level_titles):
             if title:
                 candidates.append(("region" if scope == "district" else scope, title))
         seen, unique = set(), []
@@ -271,7 +272,7 @@ async def gather_sources(place: dict, lat: float, lng: float) -> list[dict]:
 
         # Hindi Wikipedia: the Hindi version of each English article, Hindi articles geotagged nearby, and a
         # direct Hindi search for the narrow levels (street, locality, town) that English often lacks.
-        narrow_levels = [(s, n) for s, n in place["levels"] if s in ("spot", "street", "neighbourhood", "city")]
+        narrow_levels = [(s, n) for s, n in levels if s in ("spot", "street", "neighbourhood", "city")]
         hi_links, *hi_found = await asyncio.gather(
             asyncio.gather(*[_safe(wiki_langlink(c, t, "hi"), f"langlink:{t}") for _, t in unique]),
             *[_safe(hi_wiki_find(c, name, context if scope != "city" else place.get("state") or ""), f"hi-find:{name}") for scope, name in narrow_levels],

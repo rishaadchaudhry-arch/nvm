@@ -8,14 +8,16 @@ app's /api/tts/{key}.mp3 route and player stay exactly as they were.
 import asyncio
 import base64
 import logging
+import os
 
 import lameenc
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-TEXT_MODEL = "gpt-6-sol"
-VOICE_MODEL = "gpt-realtime-2.1-mini"
+# Overridable from .env so a newer model can be tried without a code change.
+TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL") or "gpt-6-sol"
+VOICE_MODEL = os.environ.get("OPENAI_VOICE_MODEL") or "gpt-realtime-2.1-mini"
 VOICES = ("marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse")
 DEFAULT_VOICE = "marin"
 SAMPLE_RATE = 24000

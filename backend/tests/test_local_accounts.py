@@ -1,13 +1,10 @@
 # NVM Local accounts feature tests (admin create/list/delete, public list, photo route) + light regression
 import io
-import os
 import datetime as dt
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
-ADMIN_EMAIL = "admin@yatra.app"
-ADMIN_PW = "Yatra-a20d244dfc16"
+from nvm_test_env import ADMIN_EMAIL, ADMIN_PW, BASE_URL
 PLACE = "lajpat-nagar-ii-1a9b6fe7"
 
 

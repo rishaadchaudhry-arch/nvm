@@ -1,15 +1,15 @@
 {
   "expo": {
     "name": "NVM",
-    "slug": "frontend",
+    "slug": "nvm",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "nvm",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.pastscape.ydt2z5",
+      "bundleIdentifier": "app.nvm.mobile",
       "infoPlist": {
         "NSCameraUsageDescription": "Point at a street to see its history",
         "NSLocationWhenInUseUsageDescription": "Know which street you are looking at",
@@ -21,7 +21,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#FDFBF7"
       },
-      "package": "com.emergent.pastscape.ydt2z5",
+      "package": "app.nvm.mobile",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.ACCESS_FINE_LOCATION",

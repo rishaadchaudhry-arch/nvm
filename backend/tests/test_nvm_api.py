@@ -1,14 +1,12 @@
 # NVM backend regression tests: look, history, search, places, traditions, devices/upvotes, admin, narration
-import os
 import re
 import time
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
+from nvm_test_env import ADMIN_EMAIL, ADMIN_PW, BASE_URL
+
 LOCAL = "http://localhost:8001"  # only used to simulate distinct client IPs for the 5-upvote rule
-ADMIN_EMAIL = "admin@yatra.app"
-ADMIN_PW = "Yatra-a20d244dfc16"
 META = re.compile(r"(the sources? (do|does) not|not mentioned in|no source|sources provided|according to the sources)", re.I)
 ERA_KEYS = None
 CREATED = []

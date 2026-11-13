@@ -1,14 +1,11 @@
 # NVM iteration 7: admin history rebuild/edit (+ Hindi Wikipedia sources) and per-account photo attach/replace
 import io
-import os
 import re
 import datetime as dt
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL").rstrip("/")
-ADMIN_EMAIL = "admin@yatra.app"
-ADMIN_PW = "Yatra-a20d244dfc16"
+from nvm_test_env import ADMIN_EMAIL, ADMIN_PW, BASE_URL
 KEY = "nai-sarak-1017b307"
 DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
