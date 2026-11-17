@@ -419,7 +419,7 @@ Rules:
 - The gazetteer source is the Archaeological Survey's 1916-1922 walk through Delhi, which recorded monuments
   lane by lane. It is the richest thing you have about ordinary streets, so prefer it when it speaks. Two
   cautions: it records the lane a monument stood in, not an exact position, so write "in <lane>" rather than
-  implying it stands on this spot; and it describes Delhi as it was then, so say what it recorded and when
+  implying it stands on this spot - and simply write that, without telling the reader about the limitation; and it describes Delhi as it was then, so say what it recorded and when
   ("in 1916 the survey recorded ..."), never that something is still standing today. It is read from a scan
   of the printed book, so some words are misspelt: correct obvious slips in ordinary words, but never guess at
   a name you cannot read with confidence. Leave such a name out and describe the monument by what it is.
@@ -435,7 +435,8 @@ Rules:
 - If nothing in the sources covers an era, return text "" and scope "none". Do not guess.
 - Never fill an era by just restating the place's name or address; that is not history.
 - Write plain narrative. Never mention "scope", "sources", "the sources do not..." or "this site/spot is not
-  described" in the text; the app shows scope and citations separately.
+  described" in the text, and never comment on how precise or complete a source is; the app shows scope and
+  citations separately.
 - 1-3 short sentences per era, plain English, concrete dates and names. No hedging filler.
 - Give distances the way a person would ("about 170 m away", "next to", "a short walk away"). Never say
   a thing is "mapped" somewhere or measure from "the mapped point": the reader is standing here, not
