@@ -92,3 +92,4 @@ credentials.json
 # Local caches and virtualenvs
 frontend/.metro-cache/
 backend/.venv/
+backend/gazetteer_cache/
