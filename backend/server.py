@@ -812,6 +812,24 @@ async def gazetteer_status(admin=Depends(require_admin)):
     return {"stored": stored, "running": running, "error": failed, **_gazetteer_import}
 
 
+@api.get("/admin/gazetteer/lanes")
+async def gazetteer_lanes(admin=Depends(require_admin)):
+    """Each placed lane: where it landed and what the map matched it to, so a wrong placement can be spotted."""
+    rows = await db.gazetteer.aggregate([
+        {"$group": {"_id": "$locality", "volume": {"$first": "$volume"}, "lat": {"$first": "$lat"}, "lng": {"$first": "$lng"},
+                    "matched": {"$first": "$geocoded_from"}, "entries": {"$sum": 1}}},
+        {"$sort": {"volume": 1, "_id": 1}},
+    ]).to_list(1000)
+    return [{"lane": r["_id"], **{k: r[k] for k in ("volume", "lat", "lng", "matched", "entries")}} for r in rows]
+
+
+@api.delete("/admin/gazetteer/lanes/{lane}")
+async def gazetteer_unplace(lane: str, admin=Depends(require_admin)):
+    """Remove a lane whose placement is wrong. Its entries come back on the next import if the lane geocodes better."""
+    res = await db.gazetteer.delete_many({"locality": lane})
+    return {"deleted": res.deleted_count}
+
+
 @api.put("/admin/history/{key}", response_model=History)
 async def edit_history(key: str, body: HistoryEdit, admin=Depends(require_admin)):
     """Hand-correct a street's history. Every era that has text must still cite at least one source."""
