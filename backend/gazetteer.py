@@ -16,6 +16,7 @@ so the model can say "in Kucha Chelan" rather than implying it stands on this ex
 import asyncio
 import logging
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -48,8 +49,8 @@ _HEADING = re.compile(r"^[A-Z][A-Z0-9'’‘\-.,& ]{2,45}$")
 _MARK = re.compile(r"\(\s*[^\s()]{1,2}\s*\)")
 _A_MARK = re.compile(r"\(\s*[ao0@«ö]\s*\)")
 _J_LETTERS = set("j;iJ")
-_PERIOD_WORDS = re.compile(
-    r"mughal|pathan|tughl|lodi|sayyid|khalji|turki|suri|sur\b|hindu|british|modern|unknown|century|a\.?\s?d\b|a\.?\s?h\b|\b1[0-9]{3}\b",
+_PERIOD_WORDS = re.compile(  # deliberately case-sensitive on A.D./A.H.: "Muhammad" must not read as a date
+    r"mughal|pathan|afghan|tughl|lodi|sayyid|khalji|turki|suri\b|hindu|british|modern|unknown|century|\bA\.\s?D\b|\bA\.\s?H\b|\b1[0-9]{3}\b",
     re.I,
 )
 _JUNK_NAME = re.compile(r"^(?:unnamed|none|do|ditto|nil|n/?a|[^a-z]*)$", re.I)
@@ -69,6 +70,16 @@ LOCALITY_ALIASES = {
     "BAZAR LAL KUWAN": "Lal Kuan",
     "BAZAR SIRKI WALAN": "Sirkiwalan",
     "KINARI BAZAR": "Kinari Bazar",
+    "KINABI BAZAR": "Kinari Bazar",
+    "TXJGHLAQABAD": "Tughlakabad",
+    "TUGHLAQABAD": "Tughlakabad",
+    "BAS A I DARAPUE": "Basai Darapur",
+    "QADAJW SHARIF": "Qadam Sharif",
+    "CHIRAQH DELHI": "Chirag Delhi",
+    "MAHRAULI": "Mehrauli",
+    "MUBARAKPUR KOTLA": "Kotla Mubarakpur",
+    "LADHA SARAI": "Lado Sarai",
+    "PAHARGANJ": "Paharganj",
 }
 
 
@@ -80,20 +91,37 @@ def _clean(s: str) -> str:
 
 
 def _fix_heading(line: str) -> str:
-    line = line.strip().rstrip(".").strip()
+    line = line.strip().rstrip(".,;:- ").strip()
     for pat, rep in _HEADING_FIXES:
         line = pat.sub(rep, line)
     return re.sub(r"\s{2,}", " ", line)
 
 
+def _is_page_header(line: str) -> bool:
+    """'LIST OF MONUMENTS' tops every page and the scan mangles it every time: 'U5T OF', 'UPT OF
+    MOXDIEXT8', 'LIST 07 UONTMINTS, 37'. Compare by shape rather than spelling."""
+    words = re.sub(r"[^A-Z0-9 ]", " ", line.upper()).split()
+    if not words:
+        return False
+    if any(len(w) >= 7 and SequenceMatcher(None, w, "MONUMENTS").ratio() >= 0.45 for w in words):
+        return True
+    # "U5T OF", "UPT OF ...", "LIST 07 ...": a short first word, then something that was "OF"
+    if 2 <= len(words) <= 5 and 3 <= len(words[0]) <= 5 and words[1] in {"OF", "OP", "OT", "O7", "07", "OS", "0F", "OI", "QF"}:
+        return True
+    return False
+
+
 def _looks_like_heading(line: str) -> bool:
     line = line.strip().rstrip(".").strip()
-    if not (4 <= len(line) <= 45) or not _HEADING.match(line) or _NOISE.match(line):
+    if not (4 <= len(line) <= 45) or not _HEADING.match(line) or _NOISE.match(line) or _is_page_header(line):
         return False
     letters = sum(c.isalpha() for c in line)
     if letters < 4 or letters < len(line) * 0.6:
         return False
-    tokens = line.replace("-", " ").split()
+    fixed = _fix_heading(line)
+    if re.search(r"\d", fixed) or re.search(r"(.)\1{3,}", fixed):  # ITTTTT5T 5HTHV
+        return False
+    tokens = fixed.replace("-", " ").split()
     # "I-V I" and similar page-number debris: mostly one- and two-letter fragments
     return sum(len(t) <= 2 for t in tokens) <= len(tokens) / 2
 
@@ -122,8 +150,28 @@ def _book_number(line: str) -> Optional[int]:
     return int(digits[0]) if digits else None
 
 
+_INLINE_HEADER = re.compile(r"\d{0,4}\s*\b[LUIT1]?[IST5T]{2,3}\s+O[FPT]\s+M\S{5,12}\.?", re.I)
+# A missed entry opening, run on inside the previous one: "No. 231. uO Grave of ...". Only a number
+# followed straight away by a marker-like scrap and a capitalised word counts - "near No. 230" in a
+# description must not cut it short.
+_NEXT_ENTRY = re.compile(r"\b(?:No|N0|Wo|Ko|Ho)[.,*]?\s*\d{1,3}\s*[.,]\s*\(?\s*\S{1,2}\s*\)?\s+[A-Z][a-z]")
+_YEAR_SCAN = str.maketrans({"G": "6", "S": "8", "O": "0", "o": "0", "l": "1", "I": "1"})
+
+
+def _fix_years(text: str) -> str:
+    """1G39 -> 1639, 164S -> 1648: four-character tokens that are mostly digits."""
+    def fix(m: re.Match) -> str:
+        tok = m.group(0)
+        return tok.translate(_YEAR_SCAN) if sum(c.isdigit() for c in tok) >= 2 else tok
+    return re.sub(r"\b[0-9GSOolI]{4}\b", fix, text)
+
+
 def _fields(body: str) -> tuple[str, str, str]:
     """(name, period, description) from one entry's text."""
+    body = _INLINE_HEADER.sub(" ", body)
+    nxt = _NEXT_ENTRY.search(body, 30)
+    if nxt:
+        body = body[: nxt.start()]
     marks = list(_MARK.finditer(body))
     segs = []
     for i, m in enumerate(marks):
@@ -137,6 +185,8 @@ def _fields(body: str) -> tuple[str, str, str]:
     for _inner, text in segs[2:7]:
         if text and len(text) <= 90 and _PERIOD_WORDS.search(text):
             period = re.sub(r"^[mh]\.?\s*(?:\S{1,2}\s*\)\s*)?", "", text).strip()  # residue of the (d) field and a broken "(e)"
+            period = re.split(r"\s*(?:[{}]|\bNone\b|\bLIST\b|\(\s*[f/]\s*\))", period)[0].strip(" .,")
+            period = _fix_years(period)
             break
     desc = ""
     for inner, text in segs[5:]:
@@ -146,26 +196,99 @@ def _fields(body: str) -> tuple[str, str, str]:
     if not desc:  # no readable (j): take the longest prose-like field after the date
         prose = [t for _i, t in segs[5:] if len(t) >= 60 and sum(c.isalpha() for c in t) >= len(t) * 0.7]
         desc = max(prose, key=len) if prose else ""
+    # A broken (j) marker leaves "Unnecessary. 0)" or "Good* (A)" at the front; trim to the first sentence start.
+    desc = re.sub(r"^[^()]{0,24}\)\s*", "", desc)
+    desc = _fix_years(desc)
+    desc = _readable_sentences(desc)
     return name[:160], period[:90], desc[:1500]
+
+
+def _bad_token(w: str) -> bool:
+    w = w.strip(".,;:'’‘\"“”()-–—!?")
+    if not w:
+        return False
+    return bool(
+        re.search(r"[{}^|*#@~<>\\\[\]«»]", w)
+        or re.search(r"[a-z][A-Z]", w)
+        or (re.search(r"[A-Za-z]\d|\d[A-Za-z]", w) and not re.fullmatch(r"\d+(st|nd|rd|th)", w))
+        or re.search(r"[!/]", w[1:-1] if len(w) > 2 else "")
+    )
+
+
+def _readable_sentences(text: str) -> str:
+    """Keep the sentences that read as English; drop the ones the scan turned to debris (Persian
+    inscriptions in particular come out as symbol soup)."""
+    keep = []
+    for sent in re.split(r"(?<=[.;])\s+(?=[A-Z(])", text):
+        toks = sent.split()
+        if not toks:
+            continue
+        if sum(_bad_token(t) for t in toks) <= max(1, len(toks) * 0.08):
+            keep.append(sent)
+    out = " ".join(keep).strip()
+    out = re.sub(r"\s*>\s*[A-Z][A-Z .'-]*$", "", out)  # the next lane's heading glued on the end
+    return out if _readable_prose(out) else ""
+
+
+def _readable_prose(text: str) -> bool:
+    """A description is worth passing on only if most of it reads as words."""
+    tokens = text.split()
+    if len(re.findall(r"[A-Za-z]{2,}", text)) < 8:
+        return False
+    bad = 0
+    for tok in tokens:
+        w = tok.strip(".,;:'’‘\"“”()-–—!?")
+        if not w:
+            continue
+        if re.search(r"[{}^|*#@~<>\\\[\]]", w):           # scan debris
+            bad += 1
+        elif re.search(r"[a-z][A-Z]", w):                   # wGidi
+            bad += 1
+        elif re.search(r"[A-Za-z]\d|\d[A-Za-z]", w) and not re.fullmatch(r"\d+(st|nd|rd|th)", w):  # liean, 1G48
+            bad += 1
+        elif re.search(r"[!/]", w[1:-1] if len(w) > 2 else ""):  # cons!ructed, f/'l
+            bad += 1
+    return bad <= max(1, len(tokens) * 0.06)
 
 
 def _worth_keeping(entry: dict) -> bool:
     name = entry.get("name", "")
     desc = entry.get("description", "")
     # "Mosque (unnamed)" names nothing: it has to earn its place with a description, like an empty name.
-    named = bool(name) and "unnamed" not in name.lower() and not _JUNK_NAME.match(name.strip()) and sum(c.isalpha() for c in name) >= 4
+    named = bool(name) and not _UNNAMED.search(name) and not _JUNK_NAME.match(name.strip()) and _readable(name) and sum(c.isalpha() for c in name) >= 4
     informative = len(desc) >= 60 and sum(c.isalpha() for c in desc) >= 40
     return named or informative
 
 
+_UNNAMED = re.compile(r"\b(?:unnamed|nameless|unknown|anonymous)\b", re.I)
+_KINDS = ("mosque", "tomb", "grave", "gateway", "gate", "temple", "well", "baoli", "tank", "bridge", "wall",
+          "palace", "pavilion", "dargah", "idgah", "garden", "serai", "sarai", "minar", "house", "haveli", "dome")
+
+
+def _readable(text: str) -> bool:
+    """False for scan debris like 'T* mb', 'Ho Itf', 'MW*' or 'fjord warn' - text no reader should see."""
+    if re.search(r"[*?#@%^<>{}|\\\]\[~]", text):
+        return False
+    words = re.findall(r"[^\s,.;:()\-]+", text)
+    if not words:
+        return False
+    odd = sum(1 for w in words if re.search(r"\d", w) and re.search(r"[A-Za-z]", w))
+    return odd <= len(words) // 4
+
+
+def _kind(name: str) -> str:
+    low = name.lower()
+    return next((k for k in _KINDS if k in low), "monument")
+
+
 def display_name(name: str) -> str:
-    """'Mosque (unnamed)' -> 'A mosque'; a real name passes through."""
+    """What a reader sees. 'Mosque (unnamed)' -> 'A mosque'; garbled -> its kind if we can tell it,
+    else 'A monument'; a readable real name passes through."""
     name = (name or "").strip()
     if not name or _JUNK_NAME.match(name):
         return "A monument"
-    if "unnamed" in name.lower():
-        kind = re.sub(r"\(?\s*unnamed\s*\)?", "", name, flags=re.I).strip(" ,.-") or "monument"
-        return f"A {kind.lower()}"
+    if _UNNAMED.search(name) or not _readable(name):
+        return f"A {_kind(name)}"
     return name
 
 
