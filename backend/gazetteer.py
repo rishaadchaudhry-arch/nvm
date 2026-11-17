@@ -16,6 +16,7 @@ so the model can say "in Kucha Chelan" rather than implying it stands on this ex
 import asyncio
 import logging
 import re
+from pathlib import Path
 from typing import Iterable, Optional
 
 import httpx
@@ -33,84 +34,171 @@ VOLUMES: dict[int, dict] = {
 }
 TITLE = "Zafar Hasan, List of Muhammadan and Hindu Monuments"
 
-# Running headers and page furniture that look like locality headings but are not.
+# Running headers, column titles and page furniture that look like lane headings but are not.
 _NOISE = re.compile(
-    r"^(?:[IVXLC]+|\d+|LIST\s*OF.*|.*MON[UOIEXTS]{3,}.*|.*MONUMENTS?.*|PLATE.*|INDEX|CONTENTS|APPENDIX|PREFACE|DELHI PROVINCE|CHAPTER.*)$",
+    r"^(?:[IVXLC\-. ]+|\d+|.*\bL?IST\s*O[FP]\b.*|.*MON[UOIEXTSKC]{3,}.*|REFERENCE|TRANSLATION|PLATE.*|INDEX|"
+    r"CONTENTS|APPENDIX|PREFACE|INTRODUCTION|NOTE|NOTES|AND|THE|DELHI PROVINCE|CHAPTER.*|ERRATA|.*CATALOGUE.*)$",
     re.I,
 )
-# A lane heading: a short all-caps line. OCR turns some letters into digits, so a few are allowed.
-_HEADING = re.compile(r"^[A-Z][A-Z0-9'’‘\-.,& ]{4,45}$")
-# Entry start. OCR mangles "No." in several ways, so be generous but anchored on the number.
-_ENTRY = re.compile(r"^\s*(?:No|N0|Xo|No\.|ISTo)\s*\.?\s*(\d{1,4})\s*[.,]", re.I)
-# Field markers: (a) name ... (e) period ... (j) the description. OCR substitutes freely.
-_FIELD_A = re.compile(r"\(\s*[ao0@]\s*\)\s*(.+?)(?=\(\s*[b6]\s*\)|$)", re.S)
-_FIELD_E = re.compile(r"\(\s*[e&]\s*\)\s*(.+?)(?=\(\s*[f/(]\s*\)|$)", re.S)
-_FIELD_J = re.compile(r"\(\s*[j;iJ1]\s*\)\s*(.+)", re.S)
+_HEADING = re.compile(r"^[A-Z][A-Z0-9'’‘\-.,& ]{2,45}$")
+
+# Every field opens with a one- or two-character marker in brackets: (a) name ... (e) date ... (j)
+# remarks ... (k) references. The scan misreads them freely - (b) as (4) or (6), (h) as (A), (a) and
+# (e) both as («) - so fields are found by position as much as by letter.
+_MARK = re.compile(r"\(\s*[^\s()]{1,2}\s*\)")
+_A_MARK = re.compile(r"\(\s*[ao0@«ö]\s*\)")
+_J_LETTERS = set("j;iJ")
+_PERIOD_WORDS = re.compile(
+    r"mughal|pathan|tughl|lodi|sayyid|khalji|turki|suri|sur\b|hindu|british|modern|unknown|century|a\.?\s?d\b|a\.?\s?h\b|\b1[0-9]{3}\b",
+    re.I,
+)
+_JUNK_NAME = re.compile(r"^(?:unnamed|none|do|ditto|nil|n/?a|[^a-z]*)$", re.I)
+
+# Lane names the scan garbles in predictable ways, and a few the modern map knows by another name.
+_HEADING_FIXES = [
+    (re.compile(r"(?<=[A-Z])1(?=[A-Z]|\b)"), "I"),   # HAVEL1 -> HAVELI
+    (re.compile(r"II(?=[AEOU])"), "H"),              # KIIAN -> KHAN, CHIIATTA -> CHHATTA
+    (re.compile(r"(?<=[A-Z])0(?=[A-Z])"), "O"),
+]
+LOCALITY_ALIASES = {
+    "FORT": "Red Fort",
+    "CHANDNI CHAUK": "Chandni Chowk",
+    "DARIBA-KALAN": "Dariba Kalan",
+    "BAZAR FATHPURI": "Fatehpuri",
+    "BAZAR KHARI BAOLI": "Khari Baoli",
+    "BAZAR LAL KUWAN": "Lal Kuan",
+    "BAZAR SIRKI WALAN": "Sirkiwalan",
+    "KINARI BAZAR": "Kinari Bazar",
+}
 
 
 def _clean(s: str) -> str:
     s = re.sub(r"[ \t]*\n[ \t]*", " ", s)
     s = re.sub(r"\s{2,}", " ", s)
+    s = re.sub(r"\btho\b", "the", s)
     return s.strip(" .,;:-—")
 
 
+def _fix_heading(line: str) -> str:
+    line = line.strip().rstrip(".").strip()
+    for pat, rep in _HEADING_FIXES:
+        line = pat.sub(rep, line)
+    return re.sub(r"\s{2,}", " ", line)
+
+
 def _looks_like_heading(line: str) -> bool:
-    line = line.strip().rstrip(".")
-    if not (4 < len(line) <= 45) or not _HEADING.match(line):
+    line = line.strip().rstrip(".").strip()
+    if not (4 <= len(line) <= 45) or not _HEADING.match(line) or _NOISE.match(line):
         return False
-    if _NOISE.match(line):
+    letters = sum(c.isalpha() for c in line)
+    if letters < 4 or letters < len(line) * 0.6:
         return False
-    return sum(c.isalpha() for c in line) >= len(line) * 0.6
+    tokens = line.replace("-", " ").split()
+    # "I-V I" and similar page-number debris: mostly one- and two-letter fragments
+    return sum(len(t) <= 2 for t in tokens) <= len(tokens) / 2
 
 
-# OCR leaves behind fragments and the book itself lists things it could say nothing about. An entry
-# earns its place only if it can tell a reader something: a real name, or a description worth reading.
-_JUNK_NAME = re.compile(r"^(?:unnamed|none|do|ditto|nil|n/?a|[^a-z]*)$", re.I)
+def _entry_start(line: str) -> Optional[int]:
+    """Where an entry's name begins on this line, or None if the line does not open an entry.
+
+    The scan writes "No. 12." a dozen ways - "No.(30.", "Wo. 42.", "No 14i", "89.", "No. Ill" - so
+    the test is: an (a)-type marker near the start of the line, after something that looks like an
+    entry number. A bare "(a)" counts too; a bare "(o)" or "(«)" does not, because those are just as
+    often a later field misread.
+    """
+    m = _A_MARK.search(line[:24])
+    if not m:
+        return None
+    prefix = line[: m.start()]
+    if prefix.strip() == "":
+        return m.start() if line[m.start():].replace(" ", "").startswith("(a)") else None
+    if re.search(r"\d", prefix) or re.search(r"[NWX]\s*[o0O]", prefix):
+        return m.start()
+    return None
+
+
+def _book_number(line: str) -> Optional[int]:
+    digits = re.findall(r"\d{1,3}", line[:20])
+    return int(digits[0]) if digits else None
+
+
+def _fields(body: str) -> tuple[str, str, str]:
+    """(name, period, description) from one entry's text."""
+    marks = list(_MARK.finditer(body))
+    segs = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+        inner = re.sub(r"[\s()]", "", m.group(0))
+        segs.append((inner, _clean(body[m.end() : end])))
+    if not segs:
+        return "", "", ""
+    name = segs[0][1]
+    period = ""
+    for _inner, text in segs[2:7]:
+        if text and len(text) <= 90 and _PERIOD_WORDS.search(text):
+            period = re.sub(r"^[mh]\.?\s*(?:\S{1,2}\s*\)\s*)?", "", text).strip()  # residue of the (d) field and a broken "(e)"
+            break
+    desc = ""
+    for inner, text in segs[5:]:
+        if inner in _J_LETTERS and len(text) >= 40:
+            desc = text
+            break
+    if not desc:  # no readable (j): take the longest prose-like field after the date
+        prose = [t for _i, t in segs[5:] if len(t) >= 60 and sum(c.isalpha() for c in t) >= len(t) * 0.7]
+        desc = max(prose, key=len) if prose else ""
+    return name[:160], period[:90], desc[:1500]
 
 
 def _worth_keeping(entry: dict) -> bool:
     name = entry.get("name", "")
     desc = entry.get("description", "")
-    named = bool(name) and not _JUNK_NAME.match(name.strip()) and sum(c.isalpha() for c in name) >= 4
+    # "Mosque (unnamed)" names nothing: it has to earn its place with a description, like an empty name.
+    named = bool(name) and "unnamed" not in name.lower() and not _JUNK_NAME.match(name.strip()) and sum(c.isalpha() for c in name) >= 4
     informative = len(desc) >= 60 and sum(c.isalpha() for c in desc) >= 40
     return named or informative
+
+
+def display_name(name: str) -> str:
+    """'Mosque (unnamed)' -> 'A mosque'; a real name passes through."""
+    name = (name or "").strip()
+    if not name or _JUNK_NAME.match(name):
+        return "A monument"
+    if "unnamed" in name.lower():
+        kind = re.sub(r"\(?\s*unnamed\s*\)?", "", name, flags=re.I).strip(" ,.-") or "monument"
+        return f"A {kind.lower()}"
+    return name
 
 
 def parse(text: str) -> list[dict]:
     """Split a volume's OCR text into monument entries, each tagged with the lane it is filed under."""
     entries: list[dict] = []
-    locality: Optional[str] = None
+    locality = ""
     current: Optional[dict] = None
     buffer: list[str] = []
+    seq = 0
 
     def flush() -> None:
         nonlocal current, buffer
-        if current is None:
-            return
-        body = _clean(" ".join(buffer))
-        name = _FIELD_A.search(body)
-        period = _FIELD_E.search(body)
-        desc = _FIELD_J.search(body)
-        current["name"] = _clean(name.group(1))[:160] if name else ""
-        current["period"] = _clean(period.group(1))[:80] if period else ""
-        current["description"] = _clean(desc.group(1))[:1500] if desc else ""
-        if _worth_keeping(current):
-            entries.append(current)
+        if current is not None:
+            current["name"], current["period"], current["description"] = _fields(" ".join(buffer))
+            if _worth_keeping(current):
+                entries.append(current)
         current, buffer = None, []
 
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        m = _ENTRY.match(line)
-        if m:
+        at = _entry_start(line)
+        if at is not None:
             flush()
-            current = {"number": int(m.group(1)), "locality": locality or ""}
-            buffer = [line[m.end() :]]
+            seq += 1
+            current = {"number": seq, "book_number": _book_number(line[:at]), "locality": locality}
+            buffer = [line[at:]]
             continue
         if _looks_like_heading(line):
             flush()
-            locality = line.strip().rstrip(".")
+            locality = _fix_heading(line)
             continue
         if current is not None:
             buffer.append(line)
@@ -118,14 +206,22 @@ def parse(text: str) -> list[dict]:
     return entries
 
 
+CACHE_DIR = Path(__file__).resolve().parent / "gazetteer_cache"
+
+
 async def fetch_volume_text(client: httpx.AsyncClient, archive_id: str) -> str:
-    """The OCR text of an Internet Archive item, whatever its text file happens to be called."""
+    """The OCR text of an Internet Archive item, downloaded once and kept on disk after that."""
+    cached = CACHE_DIR / f"{archive_id}.txt"
+    if cached.exists() and cached.stat().st_size > 10_000:
+        return cached.read_text(encoding="utf-8")
     meta = (await client.get(f"{ARCHIVE}/metadata/{archive_id}", timeout=60)).json()
     names = [f["name"] for f in meta.get("files", []) if f.get("name", "").endswith("_djvu.txt")]
     if not names:
         raise RuntimeError(f"{archive_id} has no OCR text file")
     r = await client.get(f"{ARCHIVE}/download/{archive_id}/{names[0]}", timeout=180, follow_redirects=True)
     r.raise_for_status()
+    CACHE_DIR.mkdir(exist_ok=True)
+    cached.write_text(r.text, encoding="utf-8")
     return r.text
 
 
@@ -155,16 +251,23 @@ async def _geocode(client: httpx.AsyncClient, query: str, viewbox: Optional[str]
 
 
 def _locality_queries(locality: str) -> list[str]:
-    """A 1916 lane name, spelled a few ways modern maps might know it."""
-    base = re.sub(r"\s{2,}", " ", locality.title().replace("’", "'")).strip()
-    out = [f"{base}, Delhi"]
-    swapped = base.replace("Kuncha-I-", "Kucha ").replace("Kuncha-i-", "Kucha ").replace("Muhalla ", "Mohalla ")
-    if swapped != base:
-        out.append(f"{swapped}, Delhi")
-    bare = re.sub(r"^(Muhalla|Mohalla|Kuncha-I-|Kucha|Gali|Katra|Haveli)\s*", "", swapped, flags=re.I).strip()
-    if bare and bare != swapped:
-        out.append(f"{bare}, Old Delhi, Delhi")
-    return out
+    """A 1916 lane name, spelled the ways a modern map might know it."""
+    out: list[str] = []
+    alias = LOCALITY_ALIASES.get(locality.upper())
+    if alias:
+        out.append(f"{alias}, Delhi")
+    for part in re.split(r"\s+OR\s+", locality, flags=re.I):  # "EGERTON ROAD OR NAI SARAK"
+        base = re.sub(r"\s{2,}", " ", part.title().replace("’", "'")).strip()
+        if not base:
+            continue
+        out.append(f"{base}, Delhi")
+        swapped = re.sub(r"^Kuncha-I-", "Kucha ", base, flags=re.I).replace("Muhalla ", "Mohalla ").replace("Chauk", "Chowk")
+        if swapped != base:
+            out.append(f"{swapped}, Delhi")
+        bare = re.sub(r"^(Muhalla|Mohalla|Kuncha-I-|Kucha|Gali|Katra|Haveli|Bazar|Chhatta)\s*", "", swapped, flags=re.I).strip()
+        if bare and bare != swapped and len(bare) > 3:
+            out.append(f"{bare}, Old Delhi, Delhi")
+    return list(dict.fromkeys(out))
 
 
 async def geocode_localities(localities: Iterable[str], viewbox: Optional[str], progress: Optional[dict] = None) -> dict[str, dict]:
@@ -215,7 +318,7 @@ async def import_volumes(db, volumes: list[int], viewbox: Optional[str], progres
         stats |= {
             "state": "dry run",
             "sample_localities": sorted(set(localities))[:40],
-            "sample_entries": [{k: e[k] for k in ("volume", "number", "locality", "name", "period", "description")} for e in parsed[:5]],
+            "sample_entries": [{k: e.get(k) for k in ("volume", "book_number", "locality", "name", "period", "description")} for e in parsed[::max(1, len(parsed) // 12)][:12]],
         }
         if progress is not None:
             progress.update(stats)
@@ -271,8 +374,7 @@ def as_lines(entries: Iterable[dict]) -> list[str]:
     for e in entries:
         if not _worth_keeping(e):
             continue
-        name = (e.get("name") or "").strip()
-        head = name if name and not _JUNK_NAME.match(name) else "a monument"
+        head = display_name(e.get("name", ""))
         where = f" in {e['locality'].title()}" if e.get("locality") else ""
         period = f" ({e['period']})" if e.get("period") else ""
         dist = f", about {round(e['dist_m'])} m away" if e.get("dist_m") is not None else ""
