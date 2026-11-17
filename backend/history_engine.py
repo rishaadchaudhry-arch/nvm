@@ -420,7 +420,9 @@ Rules:
   lane by lane. It is the richest thing you have about ordinary streets, so prefer it when it speaks. Two
   cautions: it records the lane a monument stood in, not an exact position, so write "in <lane>" rather than
   implying it stands on this spot; and it describes Delhi as it was then, so say what it recorded and when
-  ("in 1916 the survey recorded ..."), never that something is still standing today.
+  ("in 1916 the survey recorded ..."), never that something is still standing today. It is read from a scan
+  of the printed book, so some words are misspelt: correct obvious slips in ordinary words, but never guess at
+  a name you cannot read with confidence. Leave such a name out and describe the monument by what it is.
 - The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
   distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
   precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
