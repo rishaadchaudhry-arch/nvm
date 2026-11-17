@@ -414,6 +414,32 @@ async def get_place(key: str) -> Place:
     return Place(**doc)
 
 
+# The walled city, drawn tight to the walls: Paharganj and Sadar Bazar market sit just outside and are
+# not Old Delhi to the people who live there.
+_WALLED = (77.217, 28.636, 77.245, 28.666)
+LANDMARK_RADIUS_M = 40
+
+
+def _in_walled_city(lat: float, lng: float) -> bool:
+    min_lng, min_lat, max_lng, max_lat = _WALLED
+    return min_lat <= lat <= max_lat and min_lng <= lng <= max_lng
+
+
+async def _landmark_at(lat: float, lng: float) -> Optional[str]:
+    """The name of a historic feature within a few steps of the point, if there is one."""
+    try:
+        near = await osm_heritage.nearby(db, lat, lng, radius_m=LANDMARK_RADIUS_M, limit=5)
+    except Exception as exc:
+        logger.warning("landmark lookup failed: %s", exc)
+        return None
+    for f in near:
+        tags = f.get("tags") or {}
+        name = tags.get("name:en") or tags.get("name")
+        if name and (tags.get("historic") or tags.get("heritage")) and len(name) <= 60:
+            return name
+    return None
+
+
 async def resolve_place(lat: float, lng: float) -> Place:
     """Reverse-geocode with a ~11 m cache cell so a crowd on one street costs one lookup."""
     if not in_scope(lat, lng):
@@ -429,11 +455,14 @@ async def resolve_place(lat: float, lng: float) -> Place:
         raise HTTPException(status_code=502, detail="Couldn't work out where this is right now. Try again in a moment.") from exc
     if not rev:
         raise HTTPException(status_code=404, detail="No mapped place here")
-    p = he.place_from_reverse(rev)
+    p = he.place_from_reverse(rev, landmark=await _landmark_at(lat, lng), area="Old Delhi" if _in_walled_city(lat, lng) else None)
     if SCOPE and SCOPE_STATE and SCOPE_STATE.lower() not in (p.get("state") or "").lower():
         raise HTTPException(status_code=404, detail=f"That's in {p.get('state') or 'another state'}. NVM only covers {SCOPE_NAME} for now.")
     existing = await db.places.find_one({"key": p["key"]}, {"_id": 0})
     if existing:
+        if existing.get("subtitle") != p["subtitle"]:  # naming rules improved since this place was first seen
+            await db.places.update_one({"key": p["key"]}, {"$set": {"subtitle": p["subtitle"]}})
+            existing["subtitle"] = p["subtitle"]
         place = Place(**existing)
     else:
         place = Place(**{k: p[k] for k in ("key", "title", "subtitle", "city", "state", "country", "display_name", "osm_url")}, lat=lat, lng=lng)
@@ -828,6 +857,14 @@ async def gazetteer_unplace(lane: str, admin=Depends(require_admin)):
     """Remove a lane whose placement is wrong. Its entries come back on the next import if the lane geocodes better."""
     res = await db.gazetteer.delete_many({"locality": lane})
     return {"deleted": res.deleted_count}
+
+
+@api.post("/admin/geocode-cache/clear")
+async def clear_geocode_cache(admin=Depends(require_admin)):
+    """Forget which place each map cell resolved to, so improved naming applies to spots already seen.
+    Histories are kept; a spot whose name changes gets a fresh one the next time it is opened."""
+    res = await db.geocode_cache.delete_many({})
+    return {"cleared": res.deleted_count}
 
 
 @api.put("/admin/history/{key}", response_model=History)

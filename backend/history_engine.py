@@ -115,17 +115,28 @@ def _first(a: dict, *keys: str) -> Optional[str]:
     return None
 
 
-def place_from_reverse(rev: dict) -> dict:
+def place_from_reverse(rev: dict, landmark: Optional[str] = None, area: Optional[str] = None) -> dict:
+    """Title and subtitle for a point.
+
+    landmark: a named historic feature right where the person is pointing. It beats the nearest road
+    as a title - nobody standing at Turkman Gate thinks of it as "Sitaram Bazar Road".
+    area: the name people use for the wider area, when the map's own is an administrative unit
+    nobody says aloud (the map files the walled city under "Sadar Bazar", a revenue sub-division).
+    """
     a = rev.get("address", {}) or {}
     road = _first(a, "road", "pedestrian", "footway", "path", "square")
     locality = _first(a, "neighbourhood", "quarter", "suburb", "hamlet", "village")
     suburb = a.get("suburb") if a.get("suburb") and a.get("suburb") != locality else None
+    if area:
+        suburb = area if area != locality else None
     city = _first(a, "city", "town", "village", "municipality", "county")
     district = _first(a, "state_district", "county")
     state = a.get("state")
     name = rev.get("name") or ""
     is_road = rev.get("category") == "highway" or rev.get("addresstype") == "road"
     spot = name if name and not is_road and name != road else None
+    if landmark and landmark != road:
+        spot = landmark
 
     title = spot or road or locality or city or "Unnamed spot"
     subtitle_parts: list[str] = []
