@@ -27,8 +27,12 @@ logger = logging.getLogger(__name__)
 UA = "NVM-app/1.0 (street history lookup; contact: dev@nvm.app)"
 ARCHIVE = "https://archive.org"
 
+# Volume 1 is the walled city, so its lanes may only be placed inside it. Without this, "Lal Kuan"
+# matched the other Lal Kuan near Badarpur and "Kali Masjid" one in south Delhi, 15 km off.
+WALLED_CITY = "77.2050,28.6300,77.2500,28.6720"
+
 VOLUMES: dict[int, dict] = {
-    1: {"archive_id": "in.gov.ignca.22805", "area": "Shahjahanabad", "year": 1916},
+    1: {"archive_id": "in.gov.ignca.22805", "area": "Shahjahanabad", "year": 1916, "viewbox": WALLED_CITY},
     2: {"archive_id": "in.gov.ignca.12006", "area": "Delhi Zail", "year": 1919},
     3: {"archive_id": "in.ernet.dli.2015.69531", "area": "Mahrauli Zail", "year": 1922},
     4: {"archive_id": "in.ernet.dli.2015.69532", "area": "Outer zails", "year": 1922},
@@ -38,7 +42,7 @@ TITLE = "Zafar Hasan, List of Muhammadan and Hindu Monuments"
 # Running headers, column titles and page furniture that look like lane headings but are not.
 _NOISE = re.compile(
     r"^(?:[IVXLC\-. ]+|\d+|.*\bL?IST\s*O[FP]\b.*|.*MON[UOIEXTSKC]{3,}.*|REFERENCE|TRANSLATION|PLATE.*|INDEX|"
-    r"CONTENTS|APPENDIX|PREFACE|INTRODUCTION|NOTE|NOTES|AND|THE|DELHI PROVINCE|CHAPTER.*|ERRATA|.*CATALOGUE.*)$",
+    r"CONTENTS|APPENDIX|PREFACE|INTRODUCTION|NOTE|NOTES|AND|THE|DELHI PROVINCE|CHAPTER.*|ERRATA|.*CATALOGUE.*|[A-Z]\s+[IVXL]{1,5})$",  # last: "W III", a stray letter and a page numeral
     re.I,
 )
 _HEADING = re.compile(r"^[A-Z][A-Z0-9'’‘\-.,& ]{2,45}$")
@@ -61,6 +65,10 @@ _HEADING_FIXES = [
     (re.compile(r"II(?=[AEOU])"), "H"),              # KIIAN -> KHAN, CHIIATTA -> CHHATTA
     (re.compile(r"(?<=[A-Z])0(?=[A-Z])"), "O"),
 ]
+# Names too common or too vague to place with confidence: "Ridge" is miles of hill, and there is more
+# than one Muhammadpur. They stay out rather than land somewhere plausible but wrong.
+UNPLACEABLE = {"RIDGE", "MUHAMMADPUR", "PARADE GROUND"}
+
 LOCALITY_ALIASES = {
     "FORT": "Red Fort",
     "CHANDNI CHAUK": "Chandni Chowk",
@@ -449,7 +457,10 @@ async def import_volumes(db, volumes: list[int], viewbox: Optional[str], progres
 
     if progress is not None:
         progress.update({"state": "placing lanes on the map", **stats})
-    placed = await geocode_localities(localities, viewbox, progress)
+    placed: dict[str, dict] = {}
+    for vol in volumes:
+        lanes = [e["locality"] for e in parsed if e["volume"] == vol and e["locality"] and e["locality"].upper() not in UNPLACEABLE]
+        placed |= await geocode_localities(lanes, VOLUMES[vol].get("viewbox") or viewbox, progress)
 
     if progress is not None:
         progress.update({"state": "storing"})
