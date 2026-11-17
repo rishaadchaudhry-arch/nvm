@@ -12,6 +12,7 @@ Re-run the import when you want fresher data; it upserts, so nothing is lost if 
 """
 
 import asyncio
+import re
 import logging
 from typing import Iterable, Optional
 
@@ -160,8 +161,15 @@ async def nearby(db, lat: float, lng: float, radius_m: int = 350, limit: int = 4
 _VAGUE = {"yes", "unknown", "building", "ruins"}
 
 
+# Things the map dates but that are not history to anyone standing in the street.
+_UTILITY = re.compile(r"sub[\s-]?station|power\s*house|grid|pumping|water\s*works|telephone\s*exchange|petrol|"
+                      r"fuel|atm\b|police\s*(?:station|post|booth)|post\s*office|parking|toilet|bus\s*(?:stop|depot)", re.I)
+
+
 def _tells_us_something(name: Optional[str], tags: dict, bits: list) -> bool:
     if not bits:
+        return False
+    if name and _UTILITY.search(name) and not (tags.get("historic") or tags.get("heritage")):
         return False
     if name:
         return True

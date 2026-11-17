@@ -285,7 +285,7 @@ const useStyles = makeStyles((colors) => ({
   addText: { fontFamily: fonts.bodyBold, fontSize: 15, color: colors.onBrandPrimary },
   source: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 52, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.divider },
   srcNum: { fontFamily: fonts.bodyBold, fontSize: 12, color: colors.brand, width: 28 },
-  srcTitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.onSurface },
+  srcTitle: { fontFamily: fonts.bodyMedium, fontSize: 14, color: colors.onSurface, textAlign: "left", writingDirection: "ltr" },
   srcMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.muted, marginTop: 2 },
   disclaimer: { fontFamily: fonts.body, fontSize: 12, lineHeight: 18, color: colors.muted, marginTop: spacing.lg },
 }));

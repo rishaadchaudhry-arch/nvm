@@ -42,7 +42,12 @@ export type HistoryEdit = {
 };
 
 export const sourceLabel = (src: Source) =>
-  src.type === "wikipedia" ? (src.lang === "hi" ? "Wikipedia (Hindi)" : "Wikipedia") : src.type === "wikidata" ? "Wikidata" : src.type === "manual" ? "Added by the NVM team" : "OpenStreetMap";
+  src.type === "wikipedia"
+    ? src.lang === "hi" ? "Wikipedia (Hindi)" : src.lang === "ur" ? "Wikipedia (Urdu)" : "Wikipedia"
+    : src.type === "wikidata" ? "Wikidata"
+    : src.type === "gazetteer" ? "Archaeological Survey, 1916–22"
+    : src.type === "manual" ? "Added by the NVM team"
+    : "OpenStreetMap";
 
 export type Look = { place: Place; facing: { lat: number; lng: number }; history: History | null };
 

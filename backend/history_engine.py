@@ -437,6 +437,12 @@ Rules:
 - Write plain narrative. Never mention "scope", "sources", "the sources do not..." or "this site/spot is not
   described" in the text; the app shows scope and citations separately.
 - 1-3 short sentences per era, plain English, concrete dates and names. No hedging filler.
+- Give distances the way a person would ("about 170 m away", "next to", "a short walk away"). Never say
+  a thing is "mapped" somewhere or measure from "the mapped point": the reader is standing here, not
+  reading a map.
+- Do not fill an era with a fact about Delhi as a whole that would read the same on any street in the city
+  (that it was the Sultanate's capital, that Shah Jahan founded Shahjahanabad). Leave the era empty instead;
+  an empty era is honest, a generic one wastes the reader's time.
 - Put a fact in an era only if the source dates it to that era. Do not repeat the same fact or the same
   generic city sentence across several eras; if an era would only repeat something, leave it empty.
 - A nearby landmark's article describes that landmark, not this street. Refer to it as nearby ("the nearby X")
@@ -455,6 +461,15 @@ def _parse_json(raw: str) -> dict:
     return json.loads(raw[start : end + 1])
 
 
+_INLINE_CITE = re.compile(r"\s*(?:\[\s*\d+(?:\s*[,;]\s*\d+)*\s*\])+")
+
+
+def _plain(text: str) -> str:
+    """'...its name. [19]' -> '...its name.' The app lists each fact's sources under it, so numbers
+    in the sentence only show up twice."""
+    return re.sub(r"\s{2,}", " ", _INLINE_CITE.sub("", text)).strip()
+
+
 async def compose_history(api_key: str, place: dict, sources: list[dict]) -> dict:
     src_block = "\n\n".join(
         f"[{s['id']}] ({s['type']}{' in ' + LANG_NAMES[s['lang']] if LANG_NAMES.get(s.get('lang')) else ''}, about the {s['scope']}) {s['title']}\n{s['text']}"
@@ -468,19 +483,19 @@ async def compose_history(api_key: str, place: dict, sources: list[dict]) -> dic
 
     def cited(text_key: str, ids_key: str, limit: int) -> str:
         ids = [i for i in data.get(ids_key, []) if i in valid_ids]
-        return str(data.get(text_key, "")).strip()[:limit] if ids else ""
+        return _plain(str(data.get(text_key, "")))[:limit] if ids else ""
     by_key = {e.get("key"): e for e in data.get("eras", []) if isinstance(e, dict)}
     eras = []
     for key, label in ERAS:
         e = by_key.get(key, {})
         ids = [i for i in e.get("sources", []) if i in valid_ids]
-        text = str(e.get("text", "")).strip()
+        text = _plain(str(e.get("text", "")))
         scope = e.get("scope") if e.get("scope") in SCOPES else "none"
         if not text or not ids:  # an era without a cited source is dropped, never shown as fact
             text, scope, ids = "", "none", []
         eras.append({"key": key, "label": label, "heading": str(e.get("heading", "")).strip()[:80] if text else "", "text": text[:600], "scope": scope, "sources": ids})
     dyk = [
-        {"text": str(d.get("text", "")).strip()[:220], "sources": [i for i in d.get("sources", []) if i in valid_ids]}
+        {"text": _plain(str(d.get("text", "")))[:220], "sources": [i for i in d.get("sources", []) if i in valid_ids]}
         for d in data.get("did_you_know", [])[:3]
         if isinstance(d, dict) and d.get("text")
     ]
