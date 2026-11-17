@@ -123,7 +123,7 @@ function Editor({ placeKey }: { placeKey: string }) {
       qc.invalidateQueries({ queryKey: ["look"] });
       load(h);
       setConfirmRebuild(false);
-      setNote(h.has_records ? "Rebuilt from fresh sources (English and Hindi Wikipedia)." : "Rebuilt, but open sources still have nothing for this spot.");
+      setNote(h.has_records ? "Rebuilt from fresh sources." : "Rebuilt, but open sources still have nothing for this spot.");
     },
     onError: () => setConfirmRebuild(false),
   });
