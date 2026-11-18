@@ -37,6 +37,13 @@ def test_spelling_variants_meet():
         assert books._name_key(a) == books._name_key(b), (a, b)
 
 
+def test_short_names_match_exact_words():
+    assert books._name_key("Lal Kuan") == "=lal kuan"
+    p = {"skel": "", "bounds": set(), "plain": " the lal kuan bazar runs "}
+    assert books._mentions(p, "=lal kuan")
+    assert not books._mentions({**p, "plain": " a lal kuant "}, "=lal kuan")
+
+
 def test_generic_names_are_not_searched():
     for n in ["Old Delhi", "Main Road", "Masjid", "Gali", "Delhi"]:
         assert books._name_key(n) is None, n

@@ -480,8 +480,10 @@ BOOK_NAME_RADIUS_M = 200  # landmarks further off than this are another street's
 def _book_names(place_doc: dict, heritage: list[dict], survey: list[dict]) -> list[tuple[str, int]]:
     """Names to look this place up by in the old books, each weighted by how surely it is this place."""
     names: list[tuple[str, int]] = [(place_doc.get("title") or "", 3)]
+    # Only the spot and street themselves: wider address levels in Old Delhi are administrative
+    # districts ("Sadar Bazar", "Chandni Chowk" subdivision) that would pull in another street's story.
     for scope, name in place_doc.get("levels") or []:
-        names.append((name, {"spot": 3, "street": 3, "neighbourhood": 1}.get(scope, 0)))
+        names.append((name, {"spot": 3, "street": 3}.get(scope, 0)))
     for f in heritage:
         name = (f.get("tags") or {}).get("name:en") or (f.get("tags") or {}).get("name")
         if name and f.get("dist_m", 1e9) <= BOOK_NAME_RADIUS_M:
@@ -493,7 +495,7 @@ def _book_names(place_doc: dict, heritage: list[dict], survey: list[dict]) -> li
     return [(n, w) for n, w in names if n and w]
 
 
-async def _gather(place_doc: dict) -> list[dict]:
+async def _gather(place_doc: dict, debug: Optional[dict] = None) -> list[dict]:
     """Every source for a place. A failing local lookup never sinks a build; the others still stand."""
     lat, lng, key = place_doc["lat"], place_doc["lng"], place_doc.get("key")
     heritage_raw, survey_raw, book_sources = [], [], []
@@ -506,7 +508,10 @@ async def _gather(place_doc: dict) -> list[dict]:
     except Exception as exc:
         logger.warning("gazetteer lookup failed for %s: %s", key, exc)
     try:
-        book_sources = books.as_sources(await books.find(db, _book_names(place_doc, heritage_raw, survey_raw)))
+        names = _book_names(place_doc, heritage_raw, survey_raw)
+        if debug is not None:
+            debug["book_names"] = names
+        book_sources = books.as_sources(await books.find(db, names))
     except Exception as exc:
         logger.warning("book lookup failed for %s: %s", key, exc)
     return await he.gather_sources(
@@ -817,9 +822,11 @@ async def preview_sources(key: str, admin=Depends(require_admin)):
     place_doc = await db.places.find_one({"key": key}, {"_id": 0})
     if not place_doc:
         raise HTTPException(status_code=404, detail="Unknown place")
-    sources = await _gather(place_doc)
+    debug: dict = {}
+    sources = await _gather(place_doc, debug)
     return {
         "place": {k: place_doc.get(k) for k in ("key", "title", "subtitle", "lat", "lng")},
+        "book_names_searched": debug.get("book_names", []),
         "sources": [
             {**{k: s.get(k) for k in ("id", "type", "lang", "title", "url", "scope")}, "chars": len(s.get("text", "")), "text": s.get("text", "")}
             for s in sources

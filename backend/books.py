@@ -64,12 +64,33 @@ def _skel(word: str) -> str:
 
 
 def _name_key(name: str) -> Optional[str]:
-    """The skeleton to search for, or None if the name is too generic or too short to search safely."""
+    """What to search for, or None if the name is too generic or too short to search safely.
+
+    Usually the name's skeleton. A short name ("Lal Kuan", "Bara Dari") has too short a skeleton to
+    trust, so it is matched by its exact words instead, marked with a leading "=".
+    """
     words = re.findall(r"[A-Za-z]+", name)
-    if not words or not any(w.lower() not in _GENERIC and len(w) >= 4 for w in words):
+    if not words or not any(w.lower() not in _GENERIC and len(w) >= 3 for w in words):
         return None
     key = "".join(_skel(w) for w in words)
-    return key if len(key) >= 5 else None
+    if len(key) >= 5 or (len(words) == 1 and len(key) >= 4 and len(words[0]) >= 7):
+        return key
+    if (len(words) >= 2 and sum(len(w) for w in words) >= 6) or (len(words) == 1 and len(words[0]) >= 6):
+        return "=" + " ".join(w.lower() for w in words)
+    return None
+
+
+_QUALIFIERS = {"kalan", "khurd", "khas", "bazar", "bazaar", "road", "marg", "gali", "kucha", "mohalla", "muhalla"}
+
+
+def variants(name: str) -> list[str]:
+    """A name and its core: books write "the Dariba" for Dariba Kalan, "Ballimaran" for Muhalla Balli Maran."""
+    words = re.findall(r"[A-Za-z]+", name)
+    core = [w for w in words if w.lower() not in _QUALIFIERS]
+    out = [name]
+    if core and len(core) < len(words):
+        out.append(" ".join(core))
+    return out
 
 
 # ---- passages -----------------------------------------------------------------------------------
@@ -117,15 +138,16 @@ def split_passages(text: str) -> list[str]:
     return [p for p in out if _looks_like_prose(p)]
 
 
-def _index(text: str) -> tuple[str, set[int]]:
-    """The passage as one string of word skeletons, plus where each word starts and ends in it."""
+def _index(text: str) -> tuple[str, set[int], str]:
+    """The passage as one string of word skeletons, where each word starts and ends in it, and its plain words."""
     s, bounds = "", {0}
-    for w in re.findall(r"[A-Za-z]+", text):
+    words = re.findall(r"[A-Za-z]+", text)
+    for w in words:
         k = _skel(w)
         if k:
             s += k
             bounds.add(len(s))
-    return s, bounds
+    return s, bounds, " " + " ".join(w.lower() for w in words) + " "
 
 
 # ---- import and lookup --------------------------------------------------------------------------
@@ -165,12 +187,14 @@ async def _passages(db) -> list[dict]:
     if _memory is None:
         rows = [r async for r in db.book_passages.find({}, {"_id": 0})]
         for r in rows:
-            r["skel"], r["bounds"] = _index(r["text"])
+            r["skel"], r["bounds"], r["plain"] = _index(r["text"])
         _memory = rows
     return _memory
 
 
 def _mentions(p: dict, key: str) -> bool:
+    if key.startswith("="):
+        return f" {key[1:]} " in p["plain"]
     s, bounds = p["skel"], p["bounds"]
     i = s.find(key)
     while i != -1:
@@ -187,10 +211,11 @@ async def find(db, names: Iterable[tuple[str, int]], limit: int = 6, per_name: i
     street and two of its landmarks beats one that only mentions a famous building down the road.
     """
     wanted: dict[str, tuple[str, int]] = {}
-    for name, weight in names:
-        key = _name_key(name)
-        if key and (key not in wanted or wanted[key][1] < weight):
-            wanted[key] = (name, weight)
+    for full, weight in names:
+        for name in variants(full):
+            key = _name_key(name)
+            if key and (key not in wanted or wanted[key][1] < weight):
+                wanted[key] = (full, weight)
     if not wanted:
         return []
     scored = []
@@ -201,7 +226,9 @@ async def find(db, names: Iterable[tuple[str, int]], limit: int = 6, per_name: i
     scored.sort(key=lambda t: (-t[0], t[1]["year"], t[1]["n"]))
     out, used = [], {}
     for score, p, hit_names in scored:
-        lead = max(hit_names, key=lambda n: wanted[_name_key(n)][1])
+        weight_of = {n: w for n, w in wanted.values()}
+        hit_names = list(dict.fromkeys(hit_names))
+        lead = max(hit_names, key=lambda n: weight_of.get(n, 0))
         if used.get(lead, 0) >= per_name:
             continue
         used[lead] = used.get(lead, 0) + 1
