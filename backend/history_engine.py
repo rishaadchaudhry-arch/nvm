@@ -442,13 +442,17 @@ Rules:
   spot - that era should be the fullest one for an old street. Lanes are named as the survey named them; where
   a line reads "in <old name> (today <new name>)", tell the reader both, for example "in 1916 this lane was
   known as Katra Nil" - the old name is part of the history.
-- A book source holds passages from an old book about Delhi (Carr Stephen 1876, Fanshawe 1902, Hearn 1906).
+- A book source holds passages from an old book about Delhi, written between 1828 and 1921: travellers (Heber,
+  Chunder), guidebooks (Cooper, Harcourt, Keene, Fanshawe), surveys (Cunningham, Carr Stephen, the district
+  gazetteer), histories (Hearn, Sharp), and two Indian eyewitness diaries kept inside the city in 1857
+  (Metcalfe's translation of Mainodin Hassan Khan and Munshi Jiwan Lal). Some cover all of north India, so
+  a passage naming "the Jama Masjid" may be about Agra's: check the passage is about Delhi.
   The passages were found by searching for names, so first make sure a passage is really about this place or
   something close by - a name can be shared, and a passage can mention this street in passing while being
   about somewhere else. Use only what concerns this place. These books are the best you have for the 1600s,
   1700s and 1800s - who built what, who lived here, what happened here in 1857 - so put each fact in the era it
   describes, not the year the book was written. Say who is speaking when it matters ("Fanshawe, writing in
-  1902, describes ..."). They were written by British officials: report their facts, not their judgements
+  1902, describes ..."). Most were written by British officials: report their facts, not their judgements
   of the people of Delhi, and never repeat a slur. The text is from a scan; correct obvious misspellings, but
   never guess at a name you cannot read.
 - The openstreetmap_today source is the street as it is now: what kinds of shop and eatery line it (counted),
