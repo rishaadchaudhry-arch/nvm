@@ -1002,7 +1002,10 @@ _today_task: Optional[asyncio.Task] = None
 
 
 @api.post("/admin/osm-today/import")
-async def start_today_import(admin=Depends(require_admin)):
+async def start_today_import(
+    source: Literal["geofabrik", "overpass"] = Query("geofabrik", description="geofabrik: one daily map file, fast and reliable; overpass: tile by tile from the public servers"),
+    admin=Depends(require_admin),
+):
     """Pull Delhi's present-day shops, eateries, markets, places of worship and stations into our own
     database, for the "Today" part of each history. Background, safe to re-run; poll /admin/osm-today."""
     global _today_task
@@ -1011,7 +1014,8 @@ async def start_today_import(admin=Depends(require_admin)):
     if _today_task and not _today_task.done():
         return {"started": False, "reason": "already running", **_today_import}
     _today_import.clear()
-    _today_task = asyncio.create_task(osm_today.import_bbox(db, SCOPE, _today_import))
+    job = osm_today.import_geofabrik(db, SCOPE, _today_import) if source == "geofabrik" else osm_today.import_bbox(db, SCOPE, _today_import)
+    _today_task = asyncio.create_task(job)
     return {"started": True, "area": SCOPE_NAME}
 
 
