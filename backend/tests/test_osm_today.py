@@ -2,7 +2,10 @@
 import sys
 import types
 
-sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=object, Timeout=lambda **k: None))
+try:  # the real library when it is installed; a stand-in is enough for these pure functions
+    import httpx  # noqa: F401
+except ImportError:
+    sys.modules["httpx"] = types.SimpleNamespace(AsyncClient=object, Timeout=lambda *a, **k: None)
 import osm_today  # noqa: E402
 
 
