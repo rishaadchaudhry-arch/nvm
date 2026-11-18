@@ -26,6 +26,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import history_engine as he
 import openai_voice
+import books
 import gazetteer
 import osm_heritage
 import photo_storage
@@ -137,6 +138,7 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("volume", ASCENDING), ("number", ASCENDING), ("locality", ASCENDING)], name="vol_no_locality", unique=True),
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
     ],
+    "book_passages": [IndexModel([("book", ASCENDING), ("n", ASCENDING)], name="book_n", unique=True)],
     "osm_heritage": [
         IndexModel([("osm_id", ASCENDING)], name="osm_id", unique=True),
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
@@ -472,23 +474,52 @@ async def resolve_place(lat: float, lng: float) -> Place:
     return place
 
 
+BOOK_NAME_RADIUS_M = 200  # landmarks further off than this are another street's story
+
+
+def _book_names(place_doc: dict, heritage: list[dict], survey: list[dict]) -> list[tuple[str, int]]:
+    """Names to look this place up by in the old books, each weighted by how surely it is this place."""
+    names: list[tuple[str, int]] = [(place_doc.get("title") or "", 3)]
+    for scope, name in place_doc.get("levels") or []:
+        names.append((name, {"spot": 3, "street": 3, "neighbourhood": 1}.get(scope, 0)))
+    for f in heritage:
+        name = (f.get("tags") or {}).get("name:en") or (f.get("tags") or {}).get("name")
+        if name and f.get("dist_m", 1e9) <= BOOK_NAME_RADIUS_M:
+            names.append((name, 2 if f["dist_m"] <= 80 else 1))
+    for e in survey:
+        if e.get("locality") and e.get("dist_m", 1e9) <= BOOK_NAME_RADIUS_M:
+            then, now = gazetteer.lane_names(e["locality"])
+            names += [(then, 2)] + ([(now, 2)] if now else [])
+    return [(n, w) for n, w in names if n and w]
+
+
+async def _gather(place_doc: dict) -> list[dict]:
+    """Every source for a place. A failing local lookup never sinks a build; the others still stand."""
+    lat, lng, key = place_doc["lat"], place_doc["lng"], place_doc.get("key")
+    heritage_raw, survey_raw, book_sources = [], [], []
+    try:
+        heritage_raw = await osm_heritage.nearby(db, lat, lng)
+    except Exception as exc:
+        logger.warning("heritage lookup failed for %s: %s", key, exc)
+    try:
+        survey_raw = await gazetteer.nearby(db, lat, lng)
+    except Exception as exc:
+        logger.warning("gazetteer lookup failed for %s: %s", key, exc)
+    try:
+        book_sources = books.as_sources(await books.find(db, _book_names(place_doc, heritage_raw, survey_raw)))
+    except Exception as exc:
+        logger.warning("book lookup failed for %s: %s", key, exc)
+    return await he.gather_sources(
+        place_doc, lat, lng, osm_heritage.as_lines(heritage_raw), gazetteer.as_lines(survey_raw), book_sources
+    )
+
+
 _building: dict[str, asyncio.Task] = {}
 
 
 async def _build_history(key: str) -> dict:
     place_doc = await db.places.find_one({"key": key}, {"_id": 0})
-    lat, lng = place_doc["lat"], place_doc["lng"]
-    try:
-        heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, lat, lng))
-    except Exception as exc:  # never let a geo query sink a build; the other sources still stand
-        logger.warning("heritage lookup failed for %s: %s", key, exc)
-        heritage = []
-    try:
-        survey = gazetteer.as_lines(await gazetteer.nearby(db, lat, lng))
-    except Exception as exc:
-        logger.warning("gazetteer lookup failed for %s: %s", key, exc)
-        survey = []
-    sources = await he.gather_sources(place_doc, lat, lng, heritage, survey)
+    sources = await _gather(place_doc)
     has_text_sources = any(s["type"] != "openstreetmap" for s in sources)
     body = he.empty_history()
     if has_text_sources:
@@ -786,17 +817,38 @@ async def preview_sources(key: str, admin=Depends(require_admin)):
     place_doc = await db.places.find_one({"key": key}, {"_id": 0})
     if not place_doc:
         raise HTTPException(status_code=404, detail="Unknown place")
-    heritage = osm_heritage.as_lines(await osm_heritage.nearby(db, place_doc["lat"], place_doc["lng"]))
-    survey = gazetteer.as_lines(await gazetteer.nearby(db, place_doc["lat"], place_doc["lng"]))
-    sources = await he.gather_sources(place_doc, place_doc["lat"], place_doc["lng"], heritage, survey)
+    sources = await _gather(place_doc)
     return {
         "place": {k: place_doc.get(k) for k in ("key", "title", "subtitle", "lat", "lng")},
-        "heritage_features_nearby": len(heritage),
         "sources": [
             {**{k: s.get(k) for k in ("id", "type", "lang", "title", "url", "scope")}, "chars": len(s.get("text", "")), "text": s.get("text", "")}
             for s in sources
         ],
     }
+
+
+# ---- old books about Delhi ----
+
+_books_import: dict = {"state": "never run"}
+_books_task: Optional[asyncio.Task] = None
+
+
+@api.post("/admin/books/import")
+async def start_books_import(admin=Depends(require_admin)):
+    """Download the old Delhi books from the Internet Archive and split them into passages. Background; poll /admin/books."""
+    global _books_task
+    if _books_task and not _books_task.done():
+        return {"started": False, "reason": "already running", **_books_import}
+    _books_import.clear()
+    _books_task = asyncio.create_task(books.import_books(db, None, _books_import))
+    return {"started": True, "books": list(books.BOOKS)}
+
+
+@api.get("/admin/books")
+async def books_status(admin=Depends(require_admin)):
+    running = bool(_books_task and not _books_task.done())
+    failed = str(_books_task.exception()) if _books_task and _books_task.done() and _books_task.exception() else None
+    return {"stored": await db.book_passages.count_documents({}), "running": running, "error": failed, **_books_import}
 
 
 # ---- Zafar Hasan gazetteer import ----

@@ -19,7 +19,7 @@ export type Place = {
 };
 
 export type EraEntry = { key: string; label: string; heading: string; text: string; scope: Scope; sources: number[] };
-export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "openstreetmap_heritage" | "gazetteer" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
+export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "openstreetmap_heritage" | "gazetteer" | "book" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
 
 export type History = {
   key: string;
@@ -41,11 +41,19 @@ export type HistoryEdit = {
   new_sources: { title: string; url: string; scope: Scope }[];
 };
 
+// "H. C. Fanshawe, Delhi Past and Present (1902)" -> "Fanshawe, 1902"
+const bookLabel = (title: string) => {
+  const author = title.split(",")[0].trim().split(" ").pop() ?? "Old book";
+  const year = title.match(/\((\d{4})\)/)?.[1];
+  return year ? `${author}, ${year}` : author;
+};
+
 export const sourceLabel = (src: Source) =>
   src.type === "wikipedia"
     ? src.lang === "hi" ? "Wikipedia (Hindi)" : src.lang === "ur" ? "Wikipedia (Urdu)" : "Wikipedia"
     : src.type === "wikidata" ? "Wikidata"
     : src.type === "gazetteer" ? "Archaeological Survey, 1916–22"
+    : src.type === "book" ? bookLabel(src.title)
     : src.type === "manual" ? "Added by the NVM team"
     : "OpenStreetMap";
 
