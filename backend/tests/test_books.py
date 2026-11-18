@@ -3,7 +3,10 @@ import asyncio
 import sys
 import types
 
-sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=object))
+try:  # the real library when it is installed; a stand-in is enough for these pure functions
+    import httpx  # noqa: F401
+except ImportError:
+    sys.modules["httpx"] = types.SimpleNamespace(AsyncClient=object, Timeout=lambda *a, **k: None)
 import books  # noqa: E402
 
 PAGE = """DELHI PAST AND PRESENT

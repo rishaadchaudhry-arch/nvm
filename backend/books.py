@@ -6,7 +6,7 @@ They are not geotagged, so passages are found by name - the street's, its landma
 the 1916 survey recorded nearby - and spelling is matched loosely, because a Victorian writer's
 "Chandni Chauk" or "Kashmir Darwaza" is the same place as today's Chandni Chowk or Kashmere Gate.
 
-All three books are public domain and are read from the Internet Archive's OCR text.
+Every book is public domain and is read from the Internet Archive's OCR text.
 """
 from __future__ import annotations
 
@@ -35,6 +35,58 @@ BOOKS: dict[str, dict] = {
         "archive_id": "dli.ernet.523979",
         "title": "Gordon Risley Hearn, The Seven Cities of Delhi",
         "year": 1906,
+    },
+    # Travellers, guidebooks, surveys and eyewitnesses, 1828-1921. All public domain. Heber, Chunder
+    # and Cunningham cover far more than Delhi; their other cities' passages simply never match.
+    "heber_1": {
+        "archive_id": "narrativeofjourn01hebe",
+        "title": "Reginald Heber, Narrative of a Journey through the Upper Provinces of India, vol. 1",
+        "year": 1828,
+    },
+    "heber_2": {
+        "archive_id": "narrativeofjourn02hebeuoft",
+        "title": "Reginald Heber, Narrative of a Journey through the Upper Provinces of India, vol. 2",
+        "year": 1828,
+    },
+    "cooper": {
+        "archive_id": "handbookfordelh00coopgoog",
+        "title": "Frederic Cooper, The Handbook for Delhi",
+        "year": 1865,
+    },
+    "harcourt": {
+        "archive_id": "newguidetodelhi00harcgoog",
+        "title": "A. Harcourt, The New Guide to Delhi",
+        "year": 1873,
+    },
+    "chunder": {
+        "archive_id": "travelsahindoot01chungoog",
+        "title": "Bholanauth Chunder, The Travels of a Hindoo to various parts of Bengal and Upper India",
+        "year": 1869,
+    },
+    "cunningham": {
+        "archive_id": "report00cunngoog",
+        "title": "Alexander Cunningham, Archaeological Survey of India Reports, vol. 1",
+        "year": 1871,
+    },
+    "keene": {
+        "archive_id": "ahandbookforvis02keengoog",
+        "title": "H. G. Keene, A Handbook for Visitors to Delhi and its Neighbourhood",
+        "year": 1882,
+    },
+    "gazetteer_1883": {
+        "archive_id": "in.ernet.dli.2015.55921",
+        "title": "Delhi District Gazetteer, compiled for the Punjab Government",
+        "year": 1884,
+    },
+    "metcalfe": {
+        "archive_id": "b28710812",
+        "title": "C. T. Metcalfe, Two Native Narratives of the Mutiny in Delhi (the diaries of Mainodin Hassan Khan and Munshi Jiwan Lal, translated)",
+        "year": 1898,
+    },
+    "sharp": {
+        "archive_id": "in.ernet.dli.2015.103590",
+        "title": "H. Sharp, Delhi: Its Story and Buildings",
+        "year": 1921,
     },
 }
 
