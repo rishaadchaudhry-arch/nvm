@@ -192,19 +192,24 @@ async def _passages(db) -> list[dict]:
     return _memory
 
 
-def _mentions(p: dict, key: str) -> bool:
+def _count(p: dict, key: str) -> int:
+    """How many times a passage mentions a name."""
     if key.startswith("="):
-        return f" {key[1:]} " in p["plain"]
-    s, bounds = p["skel"], p["bounds"]
+        return p["plain"].count(f" {key[1:]} ")
+    s, bounds, n = p["skel"], p["bounds"], 0
     i = s.find(key)
     while i != -1:
         if i in bounds and (i + len(key)) in bounds:
-            return True
+            n += 1
         i = s.find(key, i + 1)
-    return False
+    return n
 
 
-async def find(db, names: Iterable[tuple[str, int]], limit: int = 6, per_name: int = 2) -> list[dict]:
+def _mentions(p: dict, key: str) -> bool:
+    return _count(p, key) > 0
+
+
+async def find(db, names: Iterable[tuple[str, int]], limit: int = 6, per_name: int = 3) -> list[dict]:
     """Passages that mention any of `names` - (name, weight) pairs, the place's own name weighing most.
 
     Ranked by the total weight of the distinct names a passage mentions, so one that mentions this
@@ -220,10 +225,15 @@ async def find(db, names: Iterable[tuple[str, int]], limit: int = 6, per_name: i
         return []
     scored = []
     for p in await _passages(db):
-        hits = [(name, w) for key, (name, w) in wanted.items() if _mentions(p, key)]
+        hits = [(name, w, c) for key, (name, w) in wanted.items() if (c := _count(p, key))]
         if hits:
-            scored.append((sum(w for _, w in hits), p, [n for n, _ in hits]))
-    scored.sort(key=lambda t: (-t[0], t[1]["year"], t[1]["n"]))
+            # Distinct names first (a passage naming the street and its landmarks is about here), then
+            # how often it names them (a passage about the Dariba says "Dariba" more than once).
+            weight = sum(w for _, w, _ in {n: (n, w, c) for n, w, c in hits}.values())
+            mentions = sum(min(c, 4) * w for _, w, c in hits)
+            scored.append((weight, mentions, p, [n for n, _, _ in hits]))
+    scored.sort(key=lambda t: (-t[0], -t[1], t[2]["year"], t[2]["n"]))
+    scored = [(w, p, names) for w, _, p, names in scored]
     out, used = [], {}
     for score, p, hit_names in scored:
         weight_of = {n: w for n, w in wanted.values()}
