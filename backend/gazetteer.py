@@ -88,7 +88,123 @@ LOCALITY_ALIASES = {
     "MUBARAKPUR KOTLA": "Kotla Mubarakpur",
     "LADHA SARAI": "Lado Sarai",
     "PAHARGANJ": "Paharganj",
+    # Lanes the 1916-22 survey names one way and today's map another. Each was checked by hand: the
+    # map's match is the same lane or village, in the right part of Delhi, not just a similar name.
+    "FAIZ BAZAR": "Netaji Subhash Marg",
+    "MUHALLA CHITLI QABR": "Chitli Qabar",
+    "MUHALLA SUIWALON-KA-HAUZ": "Suiwalan",
+    "MUHALLA QABRUSTAN": "Mohalla Qabristan",
+    "AJMER GATE": "Ajmeri Gate",
+    "BAZAR NAYABANS": "Naya Bans",
+    "MUHALLA BALLI MARAN": "Ballimaran",
+    "KATRA NIL": "Katra Neel",
+    "BAZAR PATH PUR I": "Fatehpuri",
+    "KASHMIR GATE": "Kashmere Gate",
+    "BARAH KHAMBA": "Barakhamba",  # the tomb by Nizamuddin; plain "Barah Khamba" landed 5 km off
+    "ALIQANJ": "Aliganj",
+    "RIKABGANJ": "Rakab Ganj",
+    "RAJPUR CHHAWNI": "Rajpur Road",
+    "QUDSIA GARDEN": "Qudsia Bagh",
+    "ARAKPUR BAGH MOCIII": "Arakpur Bagh",
+    "MADAN GARHI": "Madangir",
+    "CHHATARPIR": "Chhatarpur",
+    "KHIRKL": "Khirki",
+    "KATWARI SARAI": "Katwaria Sarai",
+    "ADMCHINI": "Adchini",
+    "KILOKHRI": "Kilokri",
+    "ZAMARRUDPUR": "Zamrudpur",
+    "HAIDARPUR": "Haiderpur",
+    "HASHTSAL": "Hastsal",
+    "JANTI": "Jaunti",
+    "NAGLI SAKRAOT": "Nangli Sakrawati",
+    "JHARAUDA KALAN": "Jharoda Kalan",
 }
+
+# Lanes too small for the geocoder, placed by hand from the map listing named alongside. Each listing
+# was checked to carry the lane's name and to sit in the right quarter of the walled city (or village).
+LANE_COORDS: dict[str, tuple[float, float, str]] = {
+    "KUNCHA-I-CHELAN": (28.6469, 77.2411, "Kucha Chelan, Daryaganj"),
+    "CHHATTA LAL MIYAN": (28.6414, 77.2380, "Chatta Lal Miya, Daryaganj"),
+    "KUNCHA-I-SADULLAH KHAN": (28.6442, 77.2392, "Masjid Saad Ullah Khan, Daryaganj"),
+    "KUNCHA-I-FAULAD KHAN": (28.6459, 77.2360, "Kucha Faulad Khan"),
+    "BULBULI KHAN A": (28.6463, 77.2316, "Bulbuli Khana"),
+    "KALAN MASJID OR KALI MASJID": (28.6450, 77.2307, "Kalan Masjid"),
+    "MUHALLA AQAB KALAN MASJID": (28.6450, 77.2307, "Kalan Masjid"),  # "behind the Kalan Masjid"
+    "KATRA GOKAL SHAH": (28.6483, 77.2336, "Gali Katra Gokul Shah"),
+    "MOCHION-KI-GALI": (28.6461, 77.2348, "Gali Mochiyan"),
+    "IMLI MUHALLA": (28.6461, 77.2272, "Mohalla Imli"),
+    "BAZAR SIRKI WALAN": (28.6518, 77.2237, "Sirkiwalan"),
+    "MUHALLA ROD GARAN": (28.6520, 77.2219, "Rodgran"),
+    "MUHALLA FARRASHKHANA": (28.6548, 77.2200, "Farash Khana"),
+    "GALI DAKOTAN": (28.6434, 77.2333, "Gali Dakotan"),
+    "MUHALLA XIYARYAN": (28.6497, 77.2271, "Mohalla Niyarian"),
+    "GALI HAKIM BAQA": (28.6507, 77.2276, "Gali Hakim Baqa"),
+    "CHI RAKHANA": (28.6527, 77.2298, "Chira Khana"),
+    "MUHALLA KHAJUR KI MASJID": (28.6447, 77.2365, "Khajoor Wali Masjid, Daryaganj"),
+    "KAURI T A PUL": (28.6593, 77.2363, "Kauria Bridge"),
+    "MUUALLA KUNCHA GHASIRAMA": (28.6573, 77.2243, "Kucha Ghasiram"),
+    "BHOJLA PAHARI": (28.6457, 77.2326, "Pahadi Bhojla"),
+    "CHATTA SHAHJI": (28.6518, 77.2311, "Chata Shahji Ka"),
+    "NAQQAR KHAN A ROAD": (28.6560, 77.2409, "Naubat Khana, Red Fort"),
+    "KHWAJA BAQI BILLAH": (28.6538, 77.2156, "Dargah Khwaja Baqi Billah"),
+    "QADAJW SHARIF": (28.6501, 77.2121, "Dargah Qadam Sharif"),
+    "JOGABAI": (28.5694, 77.2811, "Jogabai Extension"),
+}
+
+# Today's name for lanes placed by hand, where it differs from the survey's.
+LOCALITY_ALIASES |= {
+    "KUNCHA-I-CHELAN": "Kucha Chelan",
+    "KUNCHA-I-FAULAD KHAN": "Kucha Faulad Khan",
+    "MUHALLA ROD GARAN": "Rodgran",
+    "MUHALLA FARRASHKHANA": "Farash Khana",
+    "MUHALLA XIYARYAN": "Mohalla Niyarian",
+    "KAURI T A PUL": "Kauria Pul",
+    "MUUALLA KUNCHA GHASIRAMA": "Kucha Ghasiram",
+    "BHOJLA PAHARI": "Pahadi Bhojla",
+    "NAQQAR KHAN A ROAD": "the Naubat Khana, Red Fort",
+}
+
+# How the survey itself spelt a lane, where the scan garbled the heading. Shown to readers as the
+# 1916 name, so it must be the book's spelling, not today's.
+LANE_SPELLING_1916 = {
+    "FORT": "the Fort",
+    "DARIBA-KALAN": "Dariba Kalan",
+    "BAZAR PATH PUR I": "Bazar Fathpuri",
+    "ALIQANJ": "Aliganj",
+    "ARAKPUR BAGH MOCIII": "Arakpur Bagh Mochi",
+    "CHHATARPIR": "Chhatarpur",
+    "KHIRKL": "Khirki",
+    "ADMCHINI": "Adhchini",
+    "TXJGHLAQABAD": "Tughlaqabad",
+    "BAS A I DARAPUE": "Basai Darapur",
+    "QADAJW SHARIF": "Qadam Sharif",
+    "CHIRAQH DELHI": "Chiragh Delhi",
+    "CHHATTA PARTAB SINGH OR GALI PIPAL WALI": "Chhatta Partab Singh",
+    "EGERTON ROAD OR NAI SARAK": "Egerton Road (Nai Sarak)",
+    "BULBULI KHAN A": "Bulbuli Khana",
+    "KALAN MASJID OR KALI MASJID": "the Kalan Masjid",
+    "MUHALLA XIYARYAN": "Muhalla Niyaryan",
+    "MUHALLA ROD GARAN": "Muhalla Rodgaran",
+    "CHI RAKHANA": "Chirakhana",
+    "KAURI T A PUL": "Kauriya Pul",
+    "MUUALLA KUNCHA GHASIRAMA": "Muhalla Kuncha Ghasiram",
+    "NAQQAR KHAN A ROAD": "Naqqar Khana Road",
+    "QADAJW SHARIF": "Qadam Sharif",
+}
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z]", "", s.lower().replace("chauk", "chowk").replace("muhalla", "mohalla"))
+
+
+def lane_names(locality: str) -> tuple[str, Optional[str]]:
+    """(the lane's name in the survey, today's name if it is different)."""
+    then = LANE_SPELLING_1916.get(locality.upper()) or re.sub(r"\s{2,}", " ", locality.title())
+    then = re.sub(r"-(I|Ki|Ka|Ke)-", lambda m: f"-{m.group(1).lower()}-", then)  # Kuncha-i-Chelan, Mochion-ki-Gali
+    now = LOCALITY_ALIASES.get(locality.upper())
+    if not now or _norm(now) in _norm(then) or _norm(then) in _norm(now):
+        return then, None
+    return then, now
 
 
 def _clean(s: str) -> str:
@@ -457,9 +573,15 @@ async def import_volumes(db, volumes: list[int], viewbox: Optional[str], progres
 
     if progress is not None:
         progress.update({"state": "placing lanes on the map", **stats})
-    placed: dict[str, dict] = {}
+    placed: dict[str, dict] = {
+        loc: {"lat": lat, "lng": lng, "matched": f"{label} (placed by hand)", "display_name": label}
+        for loc, (lat, lng, label) in LANE_COORDS.items()
+    }
     for vol in volumes:
-        lanes = [e["locality"] for e in parsed if e["volume"] == vol and e["locality"] and e["locality"].upper() not in UNPLACEABLE]
+        lanes = [
+            e["locality"] for e in parsed
+            if e["volume"] == vol and e["locality"] and e["locality"].upper() not in UNPLACEABLE and e["locality"].upper() not in LANE_COORDS
+        ]
         placed |= await geocode_localities(lanes, VOLUMES[vol].get("viewbox") or viewbox, progress)
 
     if progress is not None:
@@ -509,7 +631,10 @@ def as_lines(entries: Iterable[dict]) -> list[str]:
         if not _worth_keeping(e):
             continue
         head = display_name(e.get("name", ""))
-        where = f" in {e['locality'].title()}" if e.get("locality") else ""
+        where = ""
+        if e.get("locality"):
+            then, now = lane_names(e["locality"])
+            where = f" in {then}" + (f" (today {now})" if now else "")
         period = f" ({e['period']})" if e.get("period") else ""
         dist = f", about {round(e['dist_m'])} m away" if e.get("dist_m") is not None else ""
         body = f" {e['description']}" if e.get("description") else ""

@@ -434,6 +434,10 @@ Rules:
   ("in 1916 the survey recorded ..."), never that something is still standing today. It is read from a scan
   of the printed book, so some words are misspelt: correct obvious slips in ordinary words, but never guess at
   a name you cannot read with confidence. Leave such a name out and describe the monument by what it is.
+  Everything the survey recorded goes in the 1900_1947 era, and use all of it that is readable and near this
+  spot - that era should be the fullest one for an old street. Lanes are named as the survey named them; where
+  a line reads "in <old name> (today <new name>)", tell the reader both, for example "in 1916 this lane was
+  known as Katra Nil" - the old name is part of the history.
 - The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
   distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
   precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
