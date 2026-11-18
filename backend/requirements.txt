@@ -15,6 +15,7 @@ pillow==13.0.0
 openai==3.49.0
 websockets==17.4
 lameenc==1.9.0
+osmium==4.3.2
 
 # Tests
 pytest==9.2.0

@@ -109,6 +109,93 @@ async def import_bbox(db, bbox: tuple[float, float, float, float], progress: Opt
     return result
 
 
+# ---- from a downloaded map file -----------------------------------------------------------------
+# The public Overpass servers are often overloaded (504s, minutes per tile). Geofabrik publishes the
+# whole of OpenStreetMap by region every day; the Northern Zone file holds Delhi, and reading it
+# locally takes minutes, whatever the servers are doing.
+
+GEOFABRIK_URL = "https://download.geofabrik.de/asia/india/northern-zone-latest.osm.pbf"
+_AMENITY_SET = set(AMENITIES.split("|"))
+_TOURISM_SET = set(TOURISM.split("|"))
+
+
+def wanted(tags: dict) -> bool:
+    """The same features the Overpass query asks for: named shops, eateries, worship, stations..."""
+    if not (tags.get("name") or tags.get("name:en")):
+        return False
+    return bool(
+        tags.get("shop")
+        or tags.get("amenity") in _AMENITY_SET
+        or tags.get("tourism") in _TOURISM_SET
+        or tags.get("railway") == "station"
+        or tags.get("leisure") == "park"
+    )
+
+
+def read_pbf(path: str, bbox: tuple[float, float, float, float]) -> list[dict]:
+    """Every wanted feature inside bbox (min_lng, min_lat, max_lng, max_lat), as stored records."""
+    import osmium  # imported here so the rest of the app runs without it
+
+    min_lng, min_lat, max_lng, max_lat = bbox
+    keys = ("shop", "amenity", "tourism", "railway", "leisure")
+    out: list[dict] = []
+    fp = osmium.FileProcessor(path, osmium.osm.NODE | osmium.osm.WAY).with_locations().with_filter(osmium.filter.KeyFilter(*keys))
+    for obj in fp:
+        tags = dict(obj.tags)
+        if not wanted(tags):
+            continue
+        if obj.is_node():
+            if not obj.location.valid():
+                continue
+            lat, lng, typ = obj.location.lat, obj.location.lon, "node"
+        else:
+            locs = [n.location for n in obj.nodes if n.location.valid()]
+            if not locs:
+                continue
+            lat, lng, typ = sum(l.lat for l in locs) / len(locs), sum(l.lon for l in locs) / len(locs), "way"
+        if not (min_lat <= lat <= max_lat and min_lng <= lng <= max_lng):
+            continue
+        rec = to_record({"type": typ, "id": obj.id, "lat": lat, "lon": lng, "tags": tags})
+        if rec:
+            out.append(rec)
+    return out
+
+
+async def import_geofabrik(db, bbox: tuple[float, float, float, float], progress: Optional[dict] = None, url: str = GEOFABRIK_URL) -> dict:
+    from pathlib import Path
+
+    from pymongo import UpdateOne
+
+    cache = Path(__file__).resolve().parent / "gazetteer_cache" / url.rsplit("/", 1)[-1]
+    cache.parent.mkdir(exist_ok=True)
+    if progress is not None:
+        progress.update({"state": "downloading", "source": url, "mb": 0})
+    if not cache.exists() or cache.stat().st_size < 10_000_000:
+        tmp = cache.with_suffix(".part")
+        async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True) as client:
+            async with client.stream("GET", url) as r:
+                r.raise_for_status()
+                done = 0
+                with open(tmp, "wb") as fh:
+                    async for chunk in r.aiter_bytes(1 << 20):
+                        fh.write(chunk)
+                        done += len(chunk)
+                        if progress is not None:
+                            progress["mb"] = round(done / 1e6)
+        tmp.replace(cache)
+    if progress is not None:
+        progress.update({"state": "reading the map file"})
+    records = await asyncio.to_thread(read_pbf, str(cache), bbox)
+    if progress is not None:
+        progress.update({"state": "storing", "features": len(records)})
+    for i in range(0, len(records), 1000):
+        await db.osm_today.bulk_write([UpdateOne({"osm_id": r["osm_id"]}, {"$set": r}, upsert=True) for r in records[i:i + 1000]], ordered=False)
+    result = {"state": "done", "source": url, "features": len(records), "total_in_db": await db.osm_today.count_documents({})}
+    if progress is not None:
+        progress.update(result)
+    return result
+
+
 async def _near(db, lat: float, lng: float, radius_m: int, query: Optional[dict] = None, limit: int = 400) -> list[dict]:
     geo = {"near": {"type": "Point", "coordinates": [lng, lat]}, "distanceField": "dist_m", "maxDistance": radius_m, "spherical": True}
     if query:
