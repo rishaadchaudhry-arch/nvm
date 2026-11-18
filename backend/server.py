@@ -780,6 +780,44 @@ async def rebuild_history_now(key: str, admin=Depends(require_admin)):
     return History(**await asyncio.shield(task))
 
 
+_rebuild_all: dict = {"state": "never run"}
+_rebuild_all_task: Optional[asyncio.Task] = None
+
+
+async def _rebuild_every_history(include_edited: bool, progress: dict) -> None:
+    query = {} if include_edited else {"edited_at": None}
+    keys = [d["key"] async for d in db.histories.find(query, {"_id": 0, "key": 1})]
+    progress.update({"state": "running", "total": len(keys), "done": 0, "failed": [], "skipped_edited": await db.histories.count_documents({"edited_at": {"$ne": None}}) if not include_edited else 0})
+    for key in keys:
+        try:
+            await rebuild_history_now(key, admin=None)
+        except Exception as exc:  # one bad street must not stop the rest; the old text is gone, so the next visit rebuilds it
+            logger.warning("rebuild-all: %s failed: %s", key, exc)
+            progress["failed"].append(key)
+        progress["done"] += 1
+    progress["state"] = "done"
+
+
+@api.post("/admin/histories/rebuild-all")
+async def start_rebuild_all(include_edited: bool = Query(False, description="Also rebuild histories an admin has hand-edited, losing the edits"), admin=Depends(require_admin)):
+    """Compose every stored history again from today's sources, one street at a time, in the background.
+
+    For after adding a source. Hand-edited histories are left alone unless include_edited is set.
+    Poll /admin/histories/rebuild-all for progress.
+    """
+    global _rebuild_all_task
+    if _rebuild_all_task and not _rebuild_all_task.done():
+        return {"started": False, "reason": "already running", **_rebuild_all}
+    _rebuild_all.clear()
+    _rebuild_all_task = asyncio.create_task(_rebuild_every_history(include_edited, _rebuild_all))
+    return {"started": True}
+
+
+@api.get("/admin/histories/rebuild-all")
+async def rebuild_all_status(admin=Depends(require_admin)):
+    return _rebuild_all
+
+
 # ---- OpenStreetMap heritage import ----
 
 _heritage_import: dict = {"state": "never run"}
