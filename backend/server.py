@@ -818,6 +818,142 @@ async def rebuild_all_status(admin=Depends(require_admin)):
     return _rebuild_all
 
 
+# ---- Pre-building histories for Delhi's historic places ----
+
+_prebuild: dict = {"state": "never run"}
+_prebuild_task: Optional[asyncio.Task] = None
+PREBUILD_CELL_DEG = 0.0005  # ~50 m: points closer than this almost always resolve to the same street
+
+
+async def _historic_points() -> list[tuple[float, float, str]]:
+    """Every point we know has history: named heritage features, and the lanes the 1916 survey placed."""
+    pts: list[tuple[float, float, str]] = []
+    async for f in db.osm_heritage.find({}, {"_id": 0, "location": 1, "tags": 1}):
+        tags = f.get("tags") or {}
+        name = tags.get("name:en") or tags.get("name")
+        if name and (tags.get("historic") or tags.get("heritage") or tags.get("ref:asi")) and f.get("location"):
+            lng, lat = f["location"]["coordinates"]
+            pts.append((lat, lng, name))
+    async for e in db.gazetteer.aggregate([{"$group": {"_id": "$locality", "lat": {"$first": "$lat"}, "lng": {"$first": "$lng"}}}]):
+        pts.append((e["lat"], e["lng"], gazetteer.lane_names(e["_id"])[0]))
+    seen, out = set(), []
+    for lat, lng, name in pts:
+        cell = (round(lat / PREBUILD_CELL_DEG), round(lng / PREBUILD_CELL_DEG))
+        if cell not in seen:
+            seen.add(cell)
+            out.append((lat, lng, name))
+    return out
+
+
+async def _prebuild_historic(progress: dict, concurrency: int, limit: Optional[int]) -> None:
+    points = await _historic_points()
+    if limit:
+        points = points[:limit]
+    progress.update({"state": "running", "points": len(points), "resolved": 0, "skipped": 0, "places": 0,
+                     "already_had_history": 0, "built": 0, "failed": 0, "current": None})
+    sem = asyncio.Semaphore(concurrency)
+    seen: set[str] = set()
+    stop = asyncio.Event()
+    builds: list[asyncio.Task] = []
+
+    async def build(key: str) -> None:
+        async with sem:
+            if stop.is_set():
+                return
+            try:
+                await _build_once(key)
+                progress["built"] += 1
+            except Exception as exc:
+                progress["failed"] += 1
+                detail = getattr(exc, "detail", str(exc))
+                logger.warning("prebuild: %s failed: %s", key, detail)
+                if "no credits" in str(detail).lower() or "not valid" in str(detail).lower():
+                    progress["stopped_because"] = detail
+                    stop.set()
+
+    try:
+        await _resolve_and_queue(points, progress, seen, stop, builds, build)
+        await asyncio.gather(*builds)
+    except asyncio.CancelledError:
+        for t in builds:
+            t.cancel()
+        raise
+    progress["current"] = None
+    progress["state"] = "stopped" if stop.is_set() else "done"
+
+
+async def _resolve_and_queue(points, progress: dict, seen: set, stop: asyncio.Event, builds: list, build) -> None:
+    for lat, lng, name in points:
+        if stop.is_set():
+            break
+        progress["current"] = name
+        try:
+            place = await resolve_place(lat, lng)
+        except HTTPException:
+            progress["skipped"] += 1
+            continue
+        except Exception as exc:
+            logger.warning("prebuild: resolve %s failed: %s", name, exc)
+            continue
+        finally:
+            progress["resolved"] += 1
+        if place.key in seen:
+            continue
+        seen.add(place.key)
+        progress["places"] += 1
+        if await db.histories.find_one({"key": place.key}, {"_id": 1}):
+            progress["already_had_history"] += 1
+            continue
+        builds.append(asyncio.create_task(build(place.key)))
+
+
+async def _build_once(key: str) -> dict:
+    """Build a history unless one is being built already (someone may open the same street meanwhile)."""
+    task = _building.get(key)
+    if not task:
+        task = asyncio.create_task(_build_history(key))
+        _building[key] = task
+        task.add_done_callback(lambda _t, k=key: _building.pop(k, None))
+    return await asyncio.shield(task)
+
+
+@api.post("/admin/prebuild")
+async def start_prebuild(
+    concurrency: int = Query(3, ge=1, le=6, description="Histories written at once"),
+    limit: Optional[int] = Query(None, ge=1, description="Only the first N points, for a trial run"),
+    dry_run: bool = Query(False, description="Count the points without looking anything up"),
+    admin=Depends(require_admin),
+):
+    """Write histories ahead of time for every historic place we have data on, so they open instantly.
+
+    Places that already have a history are skipped. Runs in the background; poll GET /admin/prebuild,
+    stop with DELETE /admin/prebuild. It stops by itself if the OpenAI account runs out of credit.
+    """
+    global _prebuild_task
+    if dry_run:
+        return {"points": len(await _historic_points())}
+    if _prebuild_task and not _prebuild_task.done():
+        return {"started": False, "reason": "already running", **_prebuild}
+    _prebuild.clear()
+    _prebuild_task = asyncio.create_task(_prebuild_historic(_prebuild, concurrency, limit))
+    return {"started": True}
+
+
+@api.get("/admin/prebuild")
+async def prebuild_status(admin=Depends(require_admin)):
+    failed = str(_prebuild_task.exception()) if _prebuild_task and _prebuild_task.done() and not _prebuild_task.cancelled() and _prebuild_task.exception() else None
+    return {**_prebuild, "error": failed, "histories_stored": await db.histories.count_documents({})}
+
+
+@api.delete("/admin/prebuild")
+async def stop_prebuild(admin=Depends(require_admin)):
+    if _prebuild_task and not _prebuild_task.done():
+        _prebuild_task.cancel()
+        _prebuild["state"] = "cancelled"
+        return {"stopped": True}
+    return {"stopped": False}
+
+
 # ---- OpenStreetMap heritage import ----
 
 _heritage_import: dict = {"state": "never run"}
