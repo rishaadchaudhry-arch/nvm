@@ -399,13 +399,18 @@ def clean_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def openai_error_detail(exc: Exception, fallback: str) -> str:
-    """Turn the two OpenAI failures a user can actually fix into plain words; everything else stays generic."""
+def openai_error_detail(exc: Exception, fallback: str, provider: Optional[str] = None) -> str:
+    """Turn the failures a user can actually fix into plain words; everything else stays generic."""
+    who = provider or "OpenAI"
     msg = str(exc).lower()
+    if "resource_exhausted" in msg or "rate limit" in msg or "429" in msg:
+        return f"{who} is not taking any more requests just now - on a free plan that usually means the day's limit is used up. Try again later."
     if "credits" in msg or "quota" in msg or "billing" in msg:
-        return "The OpenAI account behind NVM has no credits left. Add billing at platform.openai.com and try again."
-    if "incorrect api key" in msg or "invalid_api_key" in msg or "401" in msg:
-        return "The OpenAI key is not valid. Update it and try again."
+        return f"The {who} account behind NVM has no credits left. Add billing and try again."
+    if "incorrect api key" in msg or "invalid_api_key" in msg or "api key not valid" in msg or "401" in msg:
+        return f"The {who} key is not valid. Update it and try again."
+    if "model" in msg and ("not found" in msg or "does not exist" in msg or "unsupported" in msg):
+        return f"{who} does not have a model called {openai_voice.TEXT_MODEL}. Check OPENAI_TEXT_MODEL in backend/.env."
     return fallback
 
 
@@ -543,7 +548,7 @@ async def _build_history(key: str) -> dict:
             body = await asyncio.wait_for(he.compose_history(OPENAI_API_KEY, place_doc, sources), timeout=120)
         except Exception as exc:
             logger.error("compose failed for %s: %s", key, exc)
-            raise HTTPException(status_code=502, detail=openai_error_detail(exc, "Couldn't put this history together right now. Try again.")) from exc
+            raise HTTPException(status_code=502, detail=openai_error_detail(exc, "Couldn't put this history together right now. Try again.", openai_voice.text_provider())) from exc
     used = {i for e in body["eras"] for i in e["sources"]} | {i for d in body["did_you_know"] for i in d["sources"]}
     history = {
         "key": key,
@@ -878,7 +883,8 @@ async def _prebuild_historic(progress: dict, concurrency: int, limit: Optional[i
                 progress["failed"] += 1
                 detail = getattr(exc, "detail", str(exc))
                 logger.warning("prebuild: %s failed: %s", key, detail)
-                if "no credits" in str(detail).lower() or "not valid" in str(detail).lower():
+                low = str(detail).lower()
+                if "no credits" in low or "not valid" in low or "limit is used up" in low or "does not have a model" in low:
                     progress["stopped_because"] = detail
                     stop.set()
 
