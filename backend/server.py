@@ -29,6 +29,7 @@ import openai_voice
 import books
 import gazetteer
 import osm_heritage
+import osm_today
 import photo_storage
 import share_card
 
@@ -139,6 +140,11 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
     ],
     "book_passages": [IndexModel([("book", ASCENDING), ("n", ASCENDING)], name="book_n", unique=True)],
+    "osm_today": [
+        IndexModel([("osm_id", ASCENDING)], name="osm_id", unique=True),
+        IndexModel([("location", "2dsphere")], name="location_2dsphere"),
+        IndexModel([("kind", ASCENDING)], name="kind"),
+    ],
     "osm_heritage": [
         IndexModel([("osm_id", ASCENDING)], name="osm_id", unique=True),
         IndexModel([("location", "2dsphere")], name="location_2dsphere"),
@@ -514,8 +520,13 @@ async def _gather(place_doc: dict, debug: Optional[dict] = None) -> list[dict]:
         book_sources = books.as_sources(await books.find(db, names))
     except Exception as exc:
         logger.warning("book lookup failed for %s: %s", key, exc)
+    today: list[str] = []
+    try:
+        today = await osm_today.describe(db, lat, lng)
+    except Exception as exc:
+        logger.warning("today lookup failed for %s: %s", key, exc)
     return await he.gather_sources(
-        place_doc, lat, lng, osm_heritage.as_lines(heritage_raw), gazetteer.as_lines(survey_raw), book_sources
+        place_doc, lat, lng, osm_heritage.as_lines(heritage_raw), gazetteer.as_lines(survey_raw), book_sources, today
     )
 
 
@@ -984,6 +995,31 @@ async def heritage_status(admin=Depends(require_admin)):
     if _heritage_task and _heritage_task.done() and _heritage_task.exception():
         failed = str(_heritage_task.exception())
     return {"stored": stored, "running": running, "error": failed, **_heritage_import}
+
+
+_today_import: dict = {"state": "never run"}
+_today_task: Optional[asyncio.Task] = None
+
+
+@api.post("/admin/osm-today/import")
+async def start_today_import(admin=Depends(require_admin)):
+    """Pull Delhi's present-day shops, eateries, markets, places of worship and stations into our own
+    database, for the "Today" part of each history. Background, safe to re-run; poll /admin/osm-today."""
+    global _today_task
+    if not SCOPE:
+        raise HTTPException(status_code=400, detail="Set SCOPE_BBOX before importing; importing the whole world is not supported.")
+    if _today_task and not _today_task.done():
+        return {"started": False, "reason": "already running", **_today_import}
+    _today_import.clear()
+    _today_task = asyncio.create_task(osm_today.import_bbox(db, SCOPE, _today_import))
+    return {"started": True, "area": SCOPE_NAME}
+
+
+@api.get("/admin/osm-today")
+async def today_status(admin=Depends(require_admin)):
+    running = bool(_today_task and not _today_task.done())
+    failed = str(_today_task.exception()) if _today_task and _today_task.done() and not _today_task.cancelled() and _today_task.exception() else None
+    return {"stored": await db.osm_today.count_documents({}), "running": running, "error": failed, **_today_import}
 
 
 @api.get("/admin/sources/{key}")

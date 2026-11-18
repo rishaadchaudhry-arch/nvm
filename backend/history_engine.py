@@ -321,7 +321,7 @@ async def _safe(coro, label: str):
         return None
 
 
-async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None, survey_lines: Optional[list[str]] = None, book_sources: Optional[list[dict]] = None) -> list[dict]:
+async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None, survey_lines: Optional[list[str]] = None, book_sources: Optional[list[dict]] = None, today_lines: Optional[list[str]] = None) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
@@ -410,6 +410,8 @@ async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Op
         })
     for b in book_sources or []:
         sources.append({**b, "text": b["text"][:MAX_SOURCE_CHARS * 3]})
+    if today_lines:
+        sources.append({"type": "openstreetmap_today", "title": "OpenStreetMap: what is on this street today", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(today_lines)[:MAX_SOURCE_CHARS]})
     if heritage_lines:
         sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(heritage_lines)[:MAX_SOURCE_CHARS]})
     osm_tags = _osm_feature_line(place.get("osm_tags") or {}, None)
@@ -449,6 +451,12 @@ Rules:
   1902, describes ..."). They were written by British officials: report their facts, not their judgements
   of the people of Delhi, and never repeat a slur. The text is from a scan; correct obvious misspellings, but
   never guess at a name you cannot read.
+- The openstreetmap_today source is the street as it is now: what kinds of shop and eatery line it (counted),
+  named places nearby with their distance, and the nearest metro station. Use it for the "today" era: say what
+  the street is known for now (its dominant trades - "still a street of jewellers", "lined with paper
+  merchants"), name two or three places a visitor would recognise, and end with the nearest metro and roughly
+  how far it is. Where an older source says what the street used to sell, set that against today. Never list
+  everything, never give opening hours or prices, and do not write it like an advertisement.
 - The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
   distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
   precise source you have about this spot's immediate surroundings, so use it: name what stands close by and

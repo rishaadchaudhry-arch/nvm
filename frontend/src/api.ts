@@ -19,7 +19,7 @@ export type Place = {
 };
 
 export type EraEntry = { key: string; label: string; heading: string; text: string; scope: Scope; sources: number[] };
-export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "openstreetmap_heritage" | "gazetteer" | "book" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
+export type Source = { id: number; type: "wikipedia" | "wikidata" | "openstreetmap" | "openstreetmap_heritage" | "openstreetmap_today" | "gazetteer" | "book" | "manual"; title: string; url: string; scope: Scope; lang?: string | null };
 
 export type History = {
   key: string;
@@ -55,6 +55,7 @@ export const sourceLabel = (src: Source) =>
     : src.type === "gazetteer" ? "Archaeological Survey, 1916–22"
     : src.type === "book" ? bookLabel(src.title)
     : src.type === "manual" ? "Added by the NVM team"
+    : src.type === "openstreetmap_today" ? "OpenStreetMap, today"
     : "OpenStreetMap";
 
 export type Look = { place: Place; facing: { lat: number; lng: number }; history: History | null };

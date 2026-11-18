@@ -69,7 +69,7 @@ def _query(tile: tuple[float, float, float, float]) -> str:
     return f"[out:json][timeout:90];({parts});out center tags;"
 
 
-async def fetch_tile(client: httpx.AsyncClient, tile: tuple[float, float, float, float]) -> list[dict]:
+async def fetch_tile(client: httpx.AsyncClient, tile: tuple[float, float, float, float], query=None) -> list[dict]:
     """One tile, trying each host in turn, a few times over. Raises only once everything has failed.
 
     These servers are free, shared and frequently overloaded, so a refusal says nothing about the
@@ -79,7 +79,7 @@ async def fetch_tile(client: httpx.AsyncClient, tile: tuple[float, float, float,
     for attempt in range(1, ATTEMPTS + 1):
         for host in OVERPASS_HOSTS:
             try:
-                r = await client.post(host, data={"data": _query(tile)}, timeout=TIMEOUT)
+                r = await client.post(host, data={"data": (query or _query)(tile)}, timeout=TIMEOUT)
                 r.raise_for_status()
                 return r.json().get("elements", [])
             except Exception as exc:
