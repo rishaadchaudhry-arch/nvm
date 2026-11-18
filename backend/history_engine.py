@@ -321,7 +321,7 @@ async def _safe(coro, label: str):
         return None
 
 
-async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None, survey_lines: Optional[list[str]] = None) -> list[dict]:
+async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Optional[list[str]] = None, survey_lines: Optional[list[str]] = None, book_sources: Optional[list[dict]] = None) -> list[dict]:
     context = " ".join(x for x in [place.get("city"), place.get("state")] if x)
     levels: list[tuple[str, str]] = [(s, n) for s, n in (place.get("levels") or [])]
     async with httpx.AsyncClient(headers={"User-Agent": UA}) as c:
@@ -408,6 +408,8 @@ async def gather_sources(place: dict, lat: float, lng: float, heritage_lines: Op
             "scope": "street",
             "text": "\n".join(survey_lines)[:MAX_SOURCE_CHARS * 2],
         })
+    for b in book_sources or []:
+        sources.append({**b, "text": b["text"][:MAX_SOURCE_CHARS * 3]})
     if heritage_lines:
         sources.append({"type": "openstreetmap_heritage", "title": "OpenStreetMap: historic and heritage-listed features nearby", "url": f"https://www.openstreetmap.org/#map=18/{lat}/{lng}", "scope": "spot", "text": "\n".join(heritage_lines)[:MAX_SOURCE_CHARS]})
     osm_tags = _osm_feature_line(place.get("osm_tags") or {}, None)
@@ -438,6 +440,15 @@ Rules:
   spot - that era should be the fullest one for an old street. Lanes are named as the survey named them; where
   a line reads "in <old name> (today <new name>)", tell the reader both, for example "in 1916 this lane was
   known as Katra Nil" - the old name is part of the history.
+- A book source holds passages from an old book about Delhi (Carr Stephen 1876, Fanshawe 1902, Hearn 1906).
+  The passages were found by searching for names, so first make sure a passage is really about this place or
+  something close by - a name can be shared, and a passage can mention this street in passing while being
+  about somewhere else. Use only what concerns this place. These books are the best you have for the 1600s,
+  1700s and 1800s - who built what, who lived here, what happened here in 1857 - so put each fact in the era it
+  describes, not the year the book was written. Say who is speaking when it matters ("Fanshawe, writing in
+  1902, describes ..."). They were written by British officials: report their facts, not their judgements
+  of the people of Delhi, and never repeat a slur. The text is from a scan; correct obvious misspellings, but
+  never guess at a name you cannot read.
 - The openstreetmap_heritage source is a list of what physically stands near this spot, each item with its
   distance in metres and, where recorded, what it is, when it was built and how it is protected. It is the most
   precise source you have about this spot's immediate surroundings, so use it: name what stands close by and
