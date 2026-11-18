@@ -510,7 +510,7 @@ async def _gather(place_doc: dict, debug: Optional[dict] = None) -> list[dict]:
     try:
         names = _book_names(place_doc, heritage_raw, survey_raw)
         if debug is not None:
-            debug["book_names"] = names
+            debug["book_names"] = list(dict.fromkeys(names))
         book_sources = books.as_sources(await books.find(db, names))
     except Exception as exc:
         logger.warning("book lookup failed for %s: %s", key, exc)
