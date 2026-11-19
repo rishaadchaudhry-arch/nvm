@@ -1,4 +1,10 @@
-"""OpenAI, on the user's own key: GPT text for history composition and the Realtime voice model for narration.
+"""The model that writes the histories, and the one that reads them aloud, on the user's own key.
+
+Writing can run on any provider that speaks the OpenAI API: set TEXT_API_BASE (and TEXT_API_KEY) and
+the app talks to that one instead, for example Google's Gemini endpoint, whose free tier costs
+nothing. Those providers serve Chat Completions rather than OpenAI's newer Responses API, so the
+request is shaped to whichever the configured endpoint understands. Narration is OpenAI-only: it
+needs the Realtime API, which the compatible endpoints do not implement.
 
 Narration uses gpt-realtime-2.1-mini over the Realtime API because every Speech-API model (tts-1, tts-1-hd,
 gpt-4o-mini-tts) shuts down on 6 Jan 2027. The model returns 24 kHz PCM, which we encode to MP3 so the
@@ -15,8 +21,10 @@ from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-# Overridable from .env so a newer model can be tried without a code change.
+# Overridable from .env so a newer model, or another provider, can be tried without a code change.
 TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL") or "gpt-6-sol"
+TEXT_API_BASE = (os.environ.get("TEXT_API_BASE") or "").strip()  # empty means OpenAI itself
+TEXT_API_KEY = (os.environ.get("TEXT_API_KEY") or "").strip()  # empty means use the OpenAI key
 VOICE_MODEL = os.environ.get("OPENAI_VOICE_MODEL") or "gpt-realtime-2.1-mini"
 VOICES = ("marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse")
 DEFAULT_VOICE = "marin"
@@ -31,8 +39,24 @@ NARRATOR = (
 )
 
 
+def text_provider() -> str:
+    """Who writes the histories, for logs and error messages."""
+    if not TEXT_API_BASE:
+        return "OpenAI"
+    host = TEXT_API_BASE.split("//")[-1].split("/")[0]
+    return "Google" if "googleapis.com" in host else host
+
+
 async def generate_text(api_key: str, system: str, prompt: str) -> str:
-    client = AsyncOpenAI(api_key=api_key)
+    key = TEXT_API_KEY or api_key
+    if TEXT_API_BASE:
+        client = AsyncOpenAI(api_key=key, base_url=TEXT_API_BASE)
+        resp = await client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        )
+        return (resp.choices[0].message.content or "") if resp.choices else ""
+    client = AsyncOpenAI(api_key=key)
     resp = await client.responses.create(model=TEXT_MODEL, instructions=system, input=prompt)
     return resp.output_text
 

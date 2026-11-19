@@ -34,7 +34,18 @@ Emergent" at the bottom.
 - Node 20 or newer, and Yarn
 - Python 3.11 or newer
 - MongoDB — locally, or a free MongoDB Atlas cluster
-- An OpenAI API key with credit on the account
+- An OpenAI API key with credit on the account (narration needs it; the history text can come from
+  another provider instead — see "Writing the histories elsewhere" below)
+
+### Writing the histories elsewhere
+
+The histories can be written by any provider that speaks the OpenAI API, which is a way to run on a
+free tier. Set `TEXT_API_BASE` and `TEXT_API_KEY` in `backend/.env` and the app sends its writing
+there instead; `OPENAI_TEXT_MODEL` picks the model. Narration still goes to OpenAI, because it uses
+the Realtime API, which the compatible endpoints do not implement.
+
+Nothing else changes: the sources, the database and every history already written stay as they are,
+and only histories written after the switch come from the new provider.
 
 ## Setup
 
